@@ -1,6 +1,5 @@
 import os
 import re
-import random  # ✅ للكابتشا
 from datetime import datetime, timedelta
 import telegram
 
@@ -52,12 +51,11 @@ GROUP_RULES = (
     "⚠️ المخالفة الأولى: تحذير.\n"
     "⚠️ المخالفة الثانية: كتم 10 دقائق.\n"
     "⚠️ المخالفة الثالثة: حظر تلقائي.\n"
-    "🔐 للانضمام، يجب حل الكابتشا (التحقق البشري)."
+    "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
 )
 
 # ===================== إعدادات الحماية =====================
-AUTO_KICK_TIMEOUT = 60          # مهلة الكابتشا (ثانية)
-CAPTCHA_ATTEMPTS = 3            # عدد المحاولات الخاطئة المسموحة
+AUTO_KICK_TIMEOUT = 60
 FLOOD_LIMIT = 5
 FLOOD_TIME = 4
 MUTE_DURATION = 5
@@ -91,16 +89,16 @@ WALLET_PATTERN = re.compile(
 )
 PHONE_PATTERN = re.compile(r"\+?\d{7,15}")
 
-# ===================== التخزين المؤقت =====================
+# ===================== التخزين المؤقت (احتياطي) =====================
 warnings_db = {}          # مستخدم فقط إذا تعذر الاتصال بـ Supabase
 user_messages = {}        # يبقى في الذاكرة (مؤقت)
-pending_captcha = {}      # ✅ {user_id: {"answer": int, "attempts": int, "chat_id": int, "first_name": str, "job": job}}
-pending_approvals = {}    # ✅ لا نستخدمها بعد الآن (استبدلناها بالكابتشا)
+pending_approvals = {}
 
 
 # ===================== دوال Supabase الأساسية =====================
 
 def get_warnings(user_id: int) -> int:
+    """جلب عدد مخالفات المستخدم من Supabase أو الذاكرة"""
     if not supabase:
         return warnings_db.get(user_id, 0)
     try:
@@ -114,6 +112,7 @@ def get_warnings(user_id: int) -> int:
 
 
 def increment_warning(user_id: int, first_name: str) -> int:
+    """زيادة عدد مخالفات المستخدم بمقدار 1 في Supabase أو الذاكرة"""
     if not supabase:
         warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
         return warnings_db[user_id]
@@ -138,6 +137,7 @@ def increment_warning(user_id: int, first_name: str) -> int:
 
 
 def reset_warnings_db(user_id: int):
+    """إعادة تعيين مخالفات المستخدم في Supabase أو الذاكرة"""
     if not supabase:
         if user_id in warnings_db:
             del warnings_db[user_id]
@@ -151,6 +151,7 @@ def reset_warnings_db(user_id: int):
 
 
 def log_violation(user_id: int, chat_id: int, violation_type: str, content: str):
+    """تسجيل المخالفة في Supabase (للإحصائيات)"""
     if not supabase:
         return
     try:
@@ -165,6 +166,7 @@ def log_violation(user_id: int, chat_id: int, violation_type: str, content: str)
 
 
 def get_group_settings(chat_id: int) -> dict:
+    """جلب إعدادات المجموعة من Supabase أو الذاكرة"""
     default = {"lock_links": True, "lock_media": False, "lock_forward": False}
     if not supabase:
         return default
@@ -178,6 +180,7 @@ def get_group_settings(chat_id: int) -> dict:
                 "lock_forward": data.get("lock_forward", False),
             }
         else:
+            # إنشاء سجل افتراضي للمجموعة الجديدة
             supabase.table("group_settings").insert({
                 "chat_id": chat_id,
                 "lock_links": True,
@@ -191,6 +194,7 @@ def get_group_settings(chat_id: int) -> dict:
 
 
 def update_group_setting(chat_id: int, setting_name: str, value: bool):
+    """تحديث إعداد معين في Supabase أو الذاكرة"""
     if not supabase:
         return
     try:
@@ -248,8 +252,6 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "❌ طرد": "⛔",
         "🚫 كلمة ممنوعة": "🚫",
         "🔇 كتم 10 دقائق": "🔇",
-        "🤖 كابتشا - نجاح": "✅",
-        "🤖 كابتشا - فشل": "❌",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -318,249 +320,9 @@ async def check_flood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
     return False
 
 
-# ===================== دوال الكابتشا (جديدة) =====================
-
-def generate_captcha() -> tuple:
-    """توليد مسألة حسابية عشوائية (أرقام من 1-10)"""
-    a = random.randint(1, 10)
-    b = random.randint(1, 10)
-    op = random.choice(['+', '-'])
-    if op == '-':
-        if a < b:
-            a, b = b, a
-        answer = a - b
-    else:
-        answer = a + b
-    question = f"{a} {op} {b} = ؟"
-    return question, answer
-
-
-async def send_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, first_name: str):
-    """إرسال الكابتشا للعضو الجديد"""
-    question, answer = generate_captcha()
-    pending_captcha[user_id] = {
-        "answer": answer,
-        "attempts": 0,
-        "chat_id": chat_id,
-        "first_name": first_name
-    }
-
-    # أزرار تحديث الكابتشا
-    keyboard = [[InlineKeyboardButton("🔄 تحديث الكابتشا", callback_data=f"refresh_captcha_{user_id}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # محاولة إرسال الكابتشا في الخاص أولاً
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"🔐 <b>تحقق بشري مطلوب</b> {first_name}!\n\nلحماية المجموعة من البوتات، يرجى حل المسألة التالية (اكتب الرقم فقط):\n\n<b>{question}</b>\n\n⏳ لديك {AUTO_KICK_TIMEOUT} ثانية.",
-            parse_mode="HTML",
-            reply_markup=reply_markup
-        )
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🔐 {first_name}، تم إرسال كابتشا إلى خاصك. أجب خلال {AUTO_KICK_TIMEOUT} ثانية."
-        )
-    except:
-        # إذا لم يستقبل الخاص، نرسل في المجموعة
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🔐 {first_name}، أجب على الكابتشا التالية (اكتب الرقم فقط) في المجموعة:\n\n{question}\n\n⏳ لديك {AUTO_KICK_TIMEOUT} ثانية.",
-            parse_mode="HTML",
-            reply_markup=reply_markup
-        )
-
-    # جدولة طرد العضو إذا لم يجب خلال المهلة
-    if context.job_queue:
-        job = context.job_queue.run_once(
-            callback=kick_if_no_captcha,
-            when=AUTO_KICK_TIMEOUT,
-            data={"chat_id": chat_id, "user_id": user_id, "first_name": first_name},
-            name=f"captcha_{user_id}"
-        )
-        pending_captcha[user_id]["job"] = job
-    else:
-        print("⚠️ job_queue غير مفعل، لن يتم طرد المستخدم تلقائياً.")
-
-
-async def kick_if_no_captcha(context: ContextTypes.DEFAULT_TYPE):
-    """طرد العضو إذا لم يجب على الكابتشا خلال المهلة"""
-    data = context.job.data
-    chat_id = data["chat_id"]
-    user_id = data["user_id"]
-    first_name = data["first_name"]
-
-    if user_id in pending_captcha:
-        try:
-            await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⛔ {first_name} تم طرده لعدم إجابة الكابتشا خلال {AUTO_KICK_TIMEOUT} ثانية."
-            )
-            await send_log(
-                bot=context.bot,
-                user=telegram.User(id=user_id, first_name=first_name, is_bot=False),
-                chat_title="المجموعة",
-                deleted_text="طرد بسبب عدم إجابة الكابتشا",
-                violation_type="❌ طرد"
-            )
-        except Exception as e:
-            print(f"فشل طرد العضو {user_id}: {e}")
-        finally:
-            if user_id in pending_captcha:
-                del pending_captcha[user_id]
-
-
-async def refresh_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تحديث الكابتشا عند الضغط على الزر"""
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    if not data.startswith("refresh_captcha_"):
-        return
-
-    user_id = int(data.split("_")[2])
-    user = query.from_user
-    if user.id != user_id:
-        await query.edit_message_text("❌ هذا الزر ليس مخصصاً لك.")
-        return
-
-    if user_id not in pending_captcha:
-        await query.edit_message_text("ℹ️ انتهت مهلة الكابتشا أو تم التحقق مسبقاً.")
-        return
-
-    question, new_answer = generate_captcha()
-    pending_captcha[user_id]["answer"] = new_answer
-
-    await query.edit_message_text(
-        text=f"🔄 تم تحديث الكابتشا:\n\n{question}\n\nأجب بالرقم فقط.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 تحديث الكابتشا", callback_data=f"refresh_captcha_{user_id}")]
-        ])
-    )
-
-
-async def handle_captcha_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج إجابة المستخدم على الكابتشا (رسالة نصية)"""
-    if not update.message or not update.message.text:
-        return
-
-    user = update.effective_user
-    user_id = user.id
-    chat_id = update.effective_chat.id
-
-    # التحقق من أن المستخدم في قائمة انتظار الكابتشا
-    if user_id not in pending_captcha:
-        return
-
-    # تجاهل المشرفين (لن يحدث عادةً)
-    if await is_admin(context.bot, chat_id, user_id):
-        return
-
-    data = pending_captcha[user_id]
-    correct_answer = data["answer"]
-    first_name = data["first_name"]
-    original_chat_id = data["chat_id"]
-
-    # حذف رسالة المستخدم حتى لا تلوث المجموعة
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-    # قراءة الإجابة
-    try:
-        user_answer = int(update.message.text.strip())
-    except ValueError:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="❌ يجب إدخال رقم صحيح. حاول مرة أخرى."
-        )
-        return
-
-    if user_answer == correct_answer:
-        # ✅ إجابة صحيحة
-        # إلغاء مهمة الطرد
-        if "job" in data and data["job"]:
-            data["job"].schedule_removal()
-
-        # إزالة من قائمة الكابتشا
-        del pending_captcha[user_id]
-
-        # إرسال رسالة نجاح في الخاص
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="✅ تم التحقق بنجاح! أهلاً بك في المجموعة 🎉"
-            )
-        except:
-            pass
-
-        # إرسال رسالة ترحيب في المجموعة
-        await context.bot.send_message(
-            chat_id=original_chat_id,
-            text=f"🎉 أهلاً وسهلاً بك {first_name} في المجموعة! تم التحقق بنجاح ✅"
-        )
-
-        # تسجيل في اللوجات
-        await send_log(
-            bot=context.bot,
-            user=user,
-            chat_title=update.effective_chat.title or "المجموعة",
-            deleted_text="حل الكابتشا بنجاح وانضم إلى المجموعة",
-            violation_type="🤖 كابتشا - نجاح"
-        )
-
-    else:
-        # ❌ إجابة خاطئة
-        attempts = data.get("attempts", 0) + 1
-        data["attempts"] = attempts
-        pending_captcha[user_id] = data
-
-        if attempts >= CAPTCHA_ATTEMPTS:
-            # طرد فوري بعد المحاولات الخاطئة
-            try:
-                await context.bot.ban_chat_member(chat_id=original_chat_id, user_id=user_id)
-                await context.bot.send_message(
-                    chat_id=original_chat_id,
-                    text=f"⛔ {first_name} تم طرده لتكرار الإجابة الخاطئة ({CAPTCHA_ATTEMPTS} محاولات)."
-                )
-                if "job" in data and data["job"]:
-                    data["job"].schedule_removal()
-                del pending_captcha[user_id]
-                await send_log(
-                    bot=context.bot,
-                    user=user,
-                    chat_title=update.effective_chat.title or "المجموعة",
-                    deleted_text=f"طرد بسبب فشل الكابتشا {CAPTCHA_ATTEMPTS} مرات.",
-                    violation_type="🤖 كابتشا - فشل"
-                )
-            except Exception as e:
-                print(f"فشل الطرد: {e}")
-        else:
-            # إرسال كابتشا جديدة
-            question, new_answer = generate_captcha()
-            data["answer"] = new_answer
-            pending_captcha[user_id] = data
-
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"❌ إجابة خاطئة. حاول مرة أخرى ({attempts}/{CAPTCHA_ATTEMPTS}):\n\n{question}"
-                )
-            except:
-                await context.bot.send_message(
-                    chat_id=original_chat_id,
-                    text=f"❌ {first_name} إجابة خاطئة. حاول مرة أخرى ({attempts}/{CAPTCHA_ATTEMPTS}):\n\n{question}"
-                )
-
-
-# ===================== الترحيب (معدل بالكابتشا) =====================
+# ===================== الترحيب والموافقة =====================
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج انضمام الأعضاء الجدد - إرسال الكابتشا"""
     chat = update.effective_chat
     chat_title = chat.title or "المجموعة"
 
@@ -578,16 +340,114 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if await is_admin(context.bot, chat.id, user.id):
             continue
 
-        # إرسال الكابتشا
-        await send_captcha(context, chat.id, user.id, user.first_name)
+        keyboard = [[InlineKeyboardButton("✅ أوافق على القوانين", callback_data=f"agree_rules_{user.id}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=GROUP_RULES,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            await update.message.reply_text(f"👋 مرحباً {user.first_name}! تم إرسال القوانين إلى خاصك.")
+        except:
+            msg = await context.bot.send_message(
+                chat_id=chat.id,
+                text=f"👋 مرحباً {user.first_name}!\n\n{GROUP_RULES}",
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            try:
+                await context.bot.pin_chat_message(chat.id, msg.message_id, disable_notification=True)
+            except:
+                pass
+
+        if context.job_queue:
+            job = context.job_queue.run_once(
+                callback=kick_non_agreed,
+                when=AUTO_KICK_TIMEOUT,
+                data={"chat_id": chat.id, "user_id": user.id, "username": user.first_name},
+                name=f"kick_{user.id}"
+            )
+            pending_approvals[user.id] = job
 
         await send_log(
             bot=context.bot,
             user=user,
             chat_title=chat_title,
-            deleted_text="انضم العضو. جاري إرسال الكابتشا.",
-            violation_type="👋 ترحيب (كابتشا)"
+            deleted_text=f"انضم العضو. في انتظار الموافقة على القوانين",
+            violation_type="👋 ترحيب"
         )
+
+
+async def kick_non_agreed(context: ContextTypes.DEFAULT_TYPE):
+    data = context.job.data
+    chat_id = data["chat_id"]
+    user_id = data["user_id"]
+    username = data.get("username", f"ID:{user_id}")
+
+    if user_id in pending_approvals:
+        try:
+            await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⛔ {username} تم طرده لعدم الموافقة على القوانين."
+            )
+            await send_log(
+                bot=context.bot,
+                user=telegram.User(id=user_id, first_name=username, is_bot=False),
+                chat_title="المجموعة",
+                deleted_text=f"طرد {username} لعدم الموافقة",
+                violation_type="❌ طرد"
+            )
+            del pending_approvals[user_id]
+        except Exception as e:
+            print(f"فشل طرد العضو {user_id}: {e}")
+
+
+async def handle_rules_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if not data.startswith("agree_rules_"):
+        return
+
+    user_id = int(data.split("_")[2])
+    user = query.from_user
+    if user.id != user_id:
+        await query.edit_message_text("❌ هذا الزر ليس مخصصاً لك.")
+        return
+
+    if user_id in pending_approvals:
+        job = pending_approvals[user_id]
+        job.schedule_removal()
+        del pending_approvals[user_id]
+
+        await query.edit_message_text(
+            text=f"✅ {user.first_name}، تم تأكيد موافقتك!\nأهلاً وسهلاً بك 🎉",
+            parse_mode="HTML"
+        )
+
+        chat_id = update.effective_chat.id
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🎉 أهلاً وسهلاً بك {user.first_name} في المجموعة!"
+        )
+        try:
+            await context.bot.unpin_chat_message(chat_id=chat_id)
+        except:
+            pass
+
+        await send_log(
+            bot=context.bot,
+            user=user,
+            chat_title=update.effective_chat.title or "المجموعة",
+            deleted_text="وافق العضو على القوانين",
+            violation_type="👋 ترحيب (موافقة)"
+        )
+    else:
+        await query.edit_message_text("ℹ️ انتهت المهلة أو تمت الموافقة مسبقاً.")
 
 
 async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -603,12 +463,10 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=f"🚪 وداعاً {user.first_name}، نتمنى لك التوفيق! 🤍"
     )
 
-    # تنظيف من قوائم الكابتشا إذا كان موجوداً
-    if user.id in pending_captcha:
-        job = pending_captcha[user.id].get("job")
-        if job:
-            job.schedule_removal()
-        del pending_captcha[user.id]
+    if user.id in pending_approvals:
+        job = pending_approvals[user.id]
+        job.schedule_removal()
+        del pending_approvals[user.id]
 
     await send_log(
         bot=context.bot,
@@ -753,7 +611,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>منع الروابط</b>: مفعل ✅\n"
         "🔹 <b>منع الميديا</b>: معطل ❌\n"
         "🔹 <b>منع التوجيه</b>: معطل ❌\n"
-        "🔹 <b>الترحيب</b>: كابتشا بشري 🔐\n"
+        "🔹 <b>الترحيب</b>: مفعل ✅\n"
         "🔹 <b>الكلمات الممنوعة</b>: مفعلة 🚫\n"
         "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n"
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
@@ -780,7 +638,7 @@ async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    count = get_warnings(user_id)
+    count = get_warnings(user_id)  # ✅ من Supabase أو الذاكرة
     await update.message.reply_text(f"⚠️ عدد مخالفاتك: {count}/3")
 
 
@@ -805,8 +663,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
+    # حساب الإحصائيات
     if supabase:
         try:
+            # جلب عدد المخالفين وإجمالي التحذيرات من Supabase
             res = supabase.table("warnings").select("count").execute()
             total_warnings = sum(item.get("count", 0) for item in res.data) if res.data else 0
             res = supabase.table("warnings").select("user_id", count="exact").execute()
@@ -894,7 +754,7 @@ async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_weekly_report(context.bot)
 
 
-# ===================== المعالج الرئيسي (معدل للكابتشا) =====================
+# ===================== المعالج الرئيسي =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -905,33 +765,29 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_title = update.effective_chat.title or "المجموعة"
     user = update.effective_user
 
-    # ✅ 1. منع الأعضاء الذين لم يحلوا الكابتشا بعد من الكلام
-    if user_id in pending_captcha:
+    if user_id in pending_approvals:
         try:
             await update.message.delete()
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ {user.first_name}، أنت في مرحلة التحقق البشري. أجب على الكابتشا أولاً."
+                text=f"⚠️ {user.first_name}، وافق على القوانين أولاً."
             )
         except:
             pass
         return
 
-    # 2. فحص التكرار
     if await check_flood(update, context):
         return
 
-    # 3. تجاهل المشرفين
     if await is_admin(context.bot, chat_id, user_id):
         return
 
-    # جلب الإعدادات
+    # ✅ جلب الإعدادات من Supabase أو الذاكرة
     settings = get_group_settings(chat_id)
     lock_links = settings.get("lock_links", True)
     lock_media = settings.get("lock_media", False)
     lock_forward = settings.get("lock_forward", False)
 
-    # 4. فحص الميديا
     if lock_media and (update.message.photo or update.message.video):
         try:
             await update.message.delete()
@@ -950,7 +806,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 5. فحص الرسائل المعاد توجيهها
     if lock_forward and update.message.forward_date:
         try:
             await update.message.delete()
@@ -969,13 +824,11 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 6. فحص النص
     if not update.message.text:
         return
 
     original_text = update.message.text
 
-    # 7. فحص الكلمات الممنوعة
     has_forbidden, found_word = contains_forbidden_word(original_text)
     if has_forbidden:
         try:
@@ -991,6 +844,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=f"🚫 كلمة ممنوعة: '{found_word}'"
         )
 
+        # ✅ استخدام Supabase أو الذاكرة
         count = increment_warning(user_id, user.first_name)
 
         if count == 1:
@@ -1035,7 +889,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         return
 
-    # 8. فحص الروابط والأرقام والمحافظ
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
     wallet_cleaned = re.sub(r'\s', '', original_text)
     link_cleaned = clean_obfuscated_text(original_text)
@@ -1070,8 +923,10 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=violation_type
         )
 
+        # ✅ تسجيل المخالفة في Supabase (للإحصائيات)
         log_violation(user_id, chat_id, violation_type, original_text)
 
+        # ✅ زيادة المخالفات في Supabase أو الذاكرة
         count = increment_warning(user_id, user.first_name)
 
         if count == 1:
@@ -1121,7 +976,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
-    # أوامر المشرفين
     app.add_handler(CommandHandler("ban", ban_user))
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("resetwarnings", reset_warnings))
@@ -1130,26 +984,18 @@ def main():
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
 
-    # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
     app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("testlog", test_log))
 
-    # معالجات الأحداث
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_member))
+    app.add_handler(CallbackQueryHandler(handle_rules_approval, pattern="^agree_rules_"))
 
-    # ✅ معالج الكابتشا (يستمع للرسائل النصية)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_captcha_answer))
-
-    # ✅ معالج أزرار الكابتشا
-    app.add_handler(CallbackQueryHandler(refresh_captcha, pattern="^refresh_captcha_"))
-
-    # المعالج الرئيسي (يأتي أخيراً)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    # جدولة التقارير
+    # ===================== جدولة التقارير الأسبوعية =====================
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         weekly_report_job,
@@ -1159,7 +1005,7 @@ def main():
     scheduler.start()
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
 
-    print("🤖 Raskov Security Bot يعمل الآن مع الكابتشا عند الانضمام...")
+    print("🤖 Raskov Security Bot يعمل الآن مع قاعدة بيانات Supabase...")
     app.run_polling()
 
 
