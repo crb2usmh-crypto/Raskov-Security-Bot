@@ -36,8 +36,8 @@ GROUP_RULES = (
 AUTO_KICK_TIMEOUT = 60
 FLOOD_LIMIT = 5
 FLOOD_TIME = 4
-MUTE_DURATION = 5  # مدة كتم السبام (دقائق)
-MUTE_DURATION_SECOND = 10  # ✅ مدة الكتم عند المخالفة الثانية (دقائق)
+MUTE_DURATION = 5
+MUTE_DURATION_SECOND = 10
 
 # ===================== القائمة البيضاء =====================
 ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
@@ -121,7 +121,7 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "🚪 مغادرة": "🚪",
         "❌ طرد": "⛔",
         "🚫 كلمة ممنوعة": "🚫",
-        "🔇 كتم 10 دقائق": "🔇",  # ✅ نوع جديد للكتم
+        "🔇 كتم 10 دقائق": "🔇",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -485,7 +485,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/resetwarnings - رد على رسالة العضو\n"
         "/locklinks - تبديل\n"
         "/lockmedia - تبديل\n"
-        "/lockforward - تبديل\n\n"
+        "/lockforward - تبديل\n"
+        "/stats - عرض إحصائيات البوت 📊\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/testlog - اختبار اللوجات",
@@ -510,7 +511,44 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ فشل الإرسال: {e}")
 
 
-# ===================== المعالج الرئيسي (مع كتم 10 دقائق) =====================
+# ===================== أمر الإحصائيات (جديد) =====================
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إحصائيات البوت (للمشرفين فقط)"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    # التحقق من صلاحيات المشرف
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+        return
+
+    # جلب الإحصائيات من قاعدة البيانات المؤقتة
+    total_users_with_warnings = len(warnings_db)
+    total_warnings = sum(warnings_db.values())
+    total_banned = 0  # لا نحتفظ بسجل للمحظورين في هذه النسخة
+    
+    # عدد الأعضاء في المجموعة
+    try:
+        chat_members_count = await context.bot.get_chat_member_count(chat_id)
+    except:
+        chat_members_count = "غير معروف"
+
+    # إنشاء رسالة الإحصائيات
+    stats_message = (
+        "📊 <b>إحصائيات البوت</b>\n\n"
+        f"👥 <b>عدد أعضاء المجموعة</b>: {chat_members_count}\n"
+        f"⚠️ <b>إجمالي المخالفات</b>: {total_warnings}\n"
+        f"👤 <b>الأعضاء المخالفين</b>: {total_users_with_warnings}\n"
+        f"🚫 <b>المحظورين</b>: {total_banned}\n"
+        f"🔇 <b>التحذيرات</b>: {total_warnings}\n\n"
+        "📌 يتم تحديث الإحصائيات تلقائياً مع كل مخالفة."
+    )
+
+    await update.message.reply_text(stats_message, parse_mode="HTML")
+
+
+# ===================== المعالج الرئيسي =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -585,7 +623,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     original_text = update.message.text
 
-    # ✅ فحص الكلمات الممنوعة (الأولوية القصوى)
+    # ✅ فحص الكلمات الممنوعة
     has_forbidden, found_word = contains_forbidden_word(original_text)
     if has_forbidden:
         try:
@@ -610,7 +648,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع استخدام الكلمات الممنوعة ('{found_word}')."
             )
         elif count == 2:
-            # ✅ كتم لمدة 10 دقائق عند المخالفة الثانية
             mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND)
             if mute_success:
                 await context.bot.send_message(
@@ -692,7 +729,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع النشر المخالف."
             )
         elif count == 2:
-            # ✅ كتم لمدة 10 دقائق عند المخالفة الثانية
             mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND)
             if mute_success:
                 await context.bot.send_message(
@@ -741,6 +777,9 @@ def main():
     app.add_handler(CommandHandler("locklinks", toggle_lock_links))
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
+    
+    # ✅ أمر الإحصائيات الجديد
+    app.add_handler(CommandHandler("stats", stats))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
@@ -752,7 +791,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة وكتم 10 دقائق...")
+    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة، كتم 10 دقائق، وأمر /stats...")
     app.run_polling()
 
 
