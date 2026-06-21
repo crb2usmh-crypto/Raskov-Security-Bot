@@ -11,7 +11,7 @@ from supabase import create_client, Client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, WebAppInfo, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -323,10 +323,9 @@ def get_users_with_warnings() -> int:
         return 0
 
 
-# ===================== دوال إدارة مستويات المشرفين (جديد) =====================
+# ===================== دوال إدارة مستويات المشرفين =====================
 
 def get_admin_level(chat_id: int, user_id: int) -> int:
-    """جلب مستوى المشرف (0 = عضو عادي، 1-3 = مشرف)"""
     if not supabase:
         return 0
     try:
@@ -340,7 +339,6 @@ def get_admin_level(chat_id: int, user_id: int) -> int:
 
 
 def set_admin_level(chat_id: int, user_id: int, level: int) -> bool:
-    """تعيين مستوى مشرف (1-3)"""
     if not supabase:
         return False
     try:
@@ -360,7 +358,6 @@ def set_admin_level(chat_id: int, user_id: int, level: int) -> bool:
 
 
 def remove_admin(chat_id: int, user_id: int) -> bool:
-    """إزالة صلاحيات المشرف"""
     if not supabase:
         return False
     try:
@@ -372,7 +369,6 @@ def remove_admin(chat_id: int, user_id: int) -> bool:
 
 
 def get_admins_list(chat_id: int) -> list:
-    """جلب قائمة المشرفين ومستوياتهم"""
     if not supabase:
         return []
     try:
@@ -386,7 +382,6 @@ def get_admins_list(chat_id: int) -> list:
 # ===================== دوال إحصائيات التقارير الدورية =====================
 
 def get_weekly_stats(chat_id: int) -> dict:
-    """جلب إحصائيات الأسبوع الماضي (آخر 7 أيام)"""
     if not supabase:
         return {}
 
@@ -404,7 +399,6 @@ def get_weekly_stats(chat_id: int) -> dict:
         res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "⚠️ إدارة (تحذير)").gte("created_at", one_week_ago).execute()
         total_warnings = res.count if res.count else 0
 
-        # أكثر عضو مخالفة
         res = supabase.table("violations_log").select("user_id").eq("chat_id", chat_id).gte("created_at", one_week_ago).execute()
         user_violations = {}
         if res.data:
@@ -450,7 +444,6 @@ def get_weekly_stats(chat_id: int) -> dict:
 # ===================== دوال المساعدة الأساسية =====================
 
 async def is_admin(bot, chat_id, user_id) -> bool:
-    """التحقق من أن المستخدم مشرف (مستوى 1-3) أو مشرف تليجرام"""
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status in ["administrator", "creator"]:
@@ -463,7 +456,6 @@ async def is_admin(bot, chat_id, user_id) -> bool:
 
 
 async def is_level_or_higher(bot, chat_id, user_id, required_level: int) -> bool:
-    """التحقق من أن المستخدم لديه مستوى معين أو أعلى"""
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status in ["creator"]:
@@ -478,7 +470,6 @@ async def is_level_or_higher(bot, chat_id, user_id, required_level: int) -> bool
 
 
 async def can_manage_admin(bot, chat_id, user_id, target_id) -> tuple:
-    """التحقق من إمكانية إدارة مشرف آخر. تعيد (True, '') أو (False, 'سبب')"""
     try:
         target_member = await bot.get_chat_member(chat_id, target_id)
         if target_member.status in ["creator"]:
@@ -1042,7 +1033,7 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===================== أوامر المشرفين (مع مستويات) =====================
+# ===================== أوامر المشرفين =====================
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -1514,6 +1505,13 @@ async def force_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ زر فتح التطبيق المصغر
+    web_app_button = KeyboardButton(
+        text="📊 فتح لوحة Pi",
+        web_app=WebAppInfo(url="https://crb2usmh-crypto.github.io/Pi-Dashboard/")
+    )
+    reply_markup = ReplyKeyboardMarkup([[web_app_button]], resize_keyboard=True)
+
     await update.message.reply_text(
         "🛡️ <b>Raskov Security Bot v6.0</b>\n\n"
         "🔹 <b>القائمة البيضاء</b>: minepi.com, pi.app\n"
@@ -1525,7 +1523,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
         "🔹 <b>إعدادات قابلة للتخصيص</b>: ✅\n"
         "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n"
-        "🔹 <b>مستويات المشرفين</b>: مفعلة 👑\n\n"
+        "🔹 <b>مستويات المشرفين</b>: مفعلة 👑\n"
+        "🔹 <b>لوحة Pi Dashboard</b>: مفعلة 📊\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو (مستوى 2+)\n"
         "/unban [ID] (مستوى 2+)\n"
@@ -1544,7 +1543,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/rules - عرض قوانين المجموعة\n"
-        "/testlog - اختبار اللوجات",
+        "/testlog - اختبار اللوجات\n\n"
+        "📊 <b>لوحة Pi Dashboard</b>:\n"
+        "اضغط على الزر أدناه لفتح لوحة التحكم.",
+        reply_markup=reply_markup,
         parse_mode="HTML"
     )
 
