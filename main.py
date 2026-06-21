@@ -7,6 +7,10 @@ import telegram
 # ===================== استيراد Supabase =====================
 from supabase import create_client, Client
 
+# ===================== استيراد جدولة المهام =====================
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
 from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -17,9 +21,8 @@ from telegram.ext import (
     filters,
 )
 
-# ===================== متغيرات الرسائل المخصصة (لتسهيل التعديل) =====================
+# ===================== متغيرات الرسائل المخصصة =====================
 
-# ✅ رسالة الترحيب بعد حل الكابتشا والموافقة على القوانين
 WELCOME_MESSAGE = (
     "🎉 أهلاً وسهلاً بك {first_name} في مجموعة {group_name}!\n\n"
     "📌 <b>مجتمع Pi Network</b> يرحب بك. هنا نتبادل المعرفة وندعم بعضنا البعض.\n"
@@ -29,7 +32,6 @@ WELCOME_MESSAGE = (
     "🌟 نتمنى لك وقتاً ممتعاً ومفيداً!"
 )
 
-# ✅ رسالة القوانين (مخصصة لمجتمع Pi)
 GROUP_RULES = (
     "📜 <b>قوانين مجموعة Pi Network</b> 📜\n\n"
     "1️⃣ <b>الروابط المسموحة فقط</b>: minepi.com و pi.app.\n"
@@ -46,7 +48,6 @@ GROUP_RULES = (
     "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
 )
 
-# ✅ رسالة الكابتشا
 CAPTCHA_MESSAGE = (
     "🔐 <b>تحقق بشري مطلوب</b> {first_name}!\n\n"
     "لحماية المجموعة من البوتات الآلية، يرجى حل المسألة التالية:\n\n"
@@ -55,19 +56,16 @@ CAPTCHA_MESSAGE = (
     "📝 اكتب الرقم فقط (مثال: 5)."
 )
 
-# ✅ رسالة فشل الكابتشا (عند الإجابة الخاطئة)
 CAPTCHA_FAIL_MESSAGE = (
     "❌ إجابة خاطئة {first_name}. حاول مرة أخرى ({attempts}/{max_attempts}):\n\n"
     "{question}"
 )
 
-# ✅ رسالة نجاح الكابتشا (تُرسل في الخاص)
 CAPTCHA_SUCCESS_MESSAGE = (
     "✅ تم التحقق بنجاح {first_name}!\n"
     "سيتم الآن عرض قوانين المجموعة. يرجى الموافقة عليها لإتمام الانضمام."
 )
 
-# ✅ رسالة التحذير الأول
 WARNING_FIRST_MESSAGE = (
     "⚠️ <b>تحذير {count}/{max_warnings}</b> {first_name}\n\n"
     "📌 تم حذف رسالتك لأنها تحتوي على محتوى مخالف لقوانين المجموعة.\n"
@@ -76,7 +74,6 @@ WARNING_FIRST_MESSAGE = (
     "🔹 المخالفة الثالثة = حظر تلقائي."
 )
 
-# ✅ رسالة التحذير الثاني (مع الكتم)
 WARNING_SECOND_MESSAGE = (
     "⚠️ <b>تحذير {count}/{max_warnings}</b> {first_name}\n\n"
     "📌 تم حذف رسالتك المخالفة.\n"
@@ -85,7 +82,6 @@ WARNING_SECOND_MESSAGE = (
     "🚫 المخالفة الثالثة = حظر نهائي."
 )
 
-# ✅ رسالة الحظر التلقائي
 BAN_MESSAGE = (
     "🚫 <b>تم حظر {first_name} تلقائياً</b>\n\n"
     "📌 وصل عدد مخالفاتك إلى {max_warnings}/{max_warnings}.\n"
@@ -94,21 +90,18 @@ BAN_MESSAGE = (
     "📩 سيتم مراجعة طلبك بأسرع وقت."
 )
 
-# ✅ رسالة الكتم الناتج عن السبام (Anti-Flood)
 FLOOD_MUTE_MESSAGE = (
     "🔇 {first_name} تم كتمك لمدة {duration} دقائق.\n"
     "📌 السبب: إرسال أكثر من {limit} رسالة خلال {time} ثوانٍ (سبام).\n"
     "📖 يرجى التوقف عن التكرار السريع للحفاظ على نقاش هادف."
 )
 
-# ✅ رسالة طرد الحساب الجديد
 NEW_ACCOUNT_BAN_MESSAGE = (
     "🛑 {first_name} تم حظره تلقائياً.\n"
     "📌 سبب الحظر: حساب جديد (عمره أقل من {days} يوم).\n"
     "📖 نرحب بانضمامك بعد أن يصبح حسابك أقدم قليلاً."
 )
 
-# ✅ رسالة الوداع
 GOODBYE_MESSAGE = (
     "🚪 وداعاً {first_name}.\n"
     "📌 نتمنى لك التوفيق في رحلتك مع Pi Network.\n"
@@ -119,6 +112,7 @@ GOODBYE_MESSAGE = (
 # ===================== إعدادات البيئة =====================
 TOKEN = os.getenv("BOT_TOKEN")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
+REPORT_CHANNEL_ID = os.getenv("REPORT_CHANNEL_ID")  # ✅ جديد: قناة التقارير
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -282,7 +276,7 @@ def update_group_setting(chat_id: int, setting_name: str, value):
         print(f"⚠️ خطأ في تحديث الإعدادات: {e}")
 
 
-# ===================== دوال الإحصائيات =====================
+# ===================== دوال الإحصائيات (العامة) =====================
 
 def get_total_violations(chat_id: int) -> int:
     if not supabase:
@@ -327,6 +321,78 @@ def get_users_with_warnings() -> int:
     except Exception as e:
         print(f"⚠️ خطأ في جلب عدد المستخدمين: {e}")
         return 0
+
+
+# ===================== دوال إحصائيات التقارير الدورية (جديدة) =====================
+
+def get_weekly_stats(chat_id: int) -> dict:
+    """جلب إحصائيات الأسبوع الماضي (آخر 7 أيام)"""
+    if not supabase:
+        return {}
+
+    try:
+        # تاريخ الأسبوع الماضي
+        one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+
+        # إجمالي المخالفات في الأسبوع الماضي
+        res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).gte("created_at", one_week_ago).execute()
+        total_violations = res.count if res.count else 0
+
+        # المخالفات حسب النوع
+        violations_by_type = {}
+        for vtype in ["رابط غير مسموح", "رابط غير مسموح (ملتف)", "رقم هاتف", "محفظة رقمية", "كلمة ممنوعة"]:
+            res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", vtype).gte("created_at", one_week_ago).execute()
+            violations_by_type[vtype] = res.count if res.count else 0
+
+        # التحذيرات الصادرة في الأسبوع الماضي (من جدول violations_log أيضاً، لأننا نسجلها هناك)
+        res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "⚠️ إدارة (تحذير)").gte("created_at", one_week_ago).execute()
+        total_warnings = res.count if res.count else 0
+
+        # العضو الأكثر مخالفة في الأسبوع الماضي
+        res = supabase.table("violations_log").select("user_id", "violations_log:user_id(users:first_name)").eq("chat_id", chat_id).gte("created_at", one_week_ago).execute()
+        # تبسيط: نحسب التكرارات يدوياً
+        user_violations = {}
+        if res.data:
+            for item in res.data:
+                uid = item.get("user_id")
+                if uid:
+                    user_violations[uid] = user_violations.get(uid, 0) + 1
+        
+        top_violator = None
+        top_violator_count = 0
+        for uid, count in user_violations.items():
+            if count > top_violator_count:
+                top_violator_count = count
+                # نحاول جلب اسم المستخدم
+                user_res = supabase.table("warnings").select("first_name").eq("user_id", uid).execute()
+                if user_res.data:
+                    top_violator = user_res.data[0].get("first_name", f"ID:{uid}")
+                else:
+                    top_violator = f"ID:{uid}"
+
+        # عدد المحظورين في الأسبوع الماضي (من نوع "حظر" في logs)
+        res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "🚫 حظر").gte("created_at", one_week_ago).execute()
+        total_bans = res.count if res.count else 0
+
+        # عدد الكتم في الأسبوع الماضي (من نوع "كتم" في logs)
+        res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "🔇 كتم").gte("created_at", one_week_ago).execute()
+        total_mutes = res.count if res.count else 0
+
+        return {
+            "total_violations": total_violations,
+            "links_deleted": violations_by_type.get("رابط غير مسموح", 0) + violations_by_type.get("رابط غير مسموح (ملتف)", 0),
+            "phones_deleted": violations_by_type.get("رقم هاتف", 0),
+            "wallets_deleted": violations_by_type.get("محفظة رقمية", 0),
+            "forbidden_words": violations_by_type.get("كلمة ممنوعة", 0),
+            "total_warnings": total_warnings,
+            "total_bans": total_bans,
+            "total_mutes": total_mutes,
+            "top_violator": top_violator,
+            "top_violator_count": top_violator_count,
+        }
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب إحصائيات الأسبوع: {e}")
+        return {}
 
 
 # ===================== دوال المساعدة الأساسية =====================
@@ -382,6 +448,7 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "🤖 كابتشا - نجاح": "✅",
         "🤖 كابتشا - فشل": "❌",
         "⚙️ إعدادات": "⚙️",
+        "📊 تقرير": "📊",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -486,7 +553,6 @@ async def send_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id
     keyboard = [[InlineKeyboardButton("🔄 تحديث الكابتشا", callback_data=f"refresh_captcha_{user_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # ✅ استخدام الرسالة المخصصة
     captcha_text = CAPTCHA_MESSAGE.format(
         first_name=first_name,
         question=question,
@@ -824,7 +890,6 @@ async def handle_rules_approval(update: Update, context: ContextTypes.DEFAULT_TY
         chat_id = update.effective_chat.id
         chat_title = update.effective_chat.title or "المجموعة"
 
-        # ✅ استخدام رسالة الترحيب المخصصة
         await context.bot.send_message(
             chat_id=chat_id,
             text=WELCOME_MESSAGE.format(
@@ -858,7 +923,6 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id == context.bot.id:
         return
 
-    # ✅ استخدام رسالة الوداع المخصصة
     await context.bot.send_message(
         chat_id=chat.id,
         text=GOODBYE_MESSAGE.format(
@@ -884,6 +948,81 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         deleted_text="غادر العضو المجموعة.",
         violation_type="🚪 مغادرة"
     )
+
+
+# ===================== التقارير الدورية (جديد) =====================
+
+async def send_weekly_report(bot, chat_id: int):
+    """إنشاء وإرسال التقرير الأسبوعي"""
+    if not supabase:
+        return
+
+    stats = get_weekly_stats(chat_id)
+    if not stats:
+        return
+
+    # تنسيق التقرير
+    report_text = (
+        "📊 <b>تقرير الأسبوعي للمجموعة</b>\n"
+        f"📅 <b>الفترة</b>: آخر 7 أيام\n\n"
+        f"🛡️ <b>إجمالي المخالفات</b>: {stats.get('total_violations', 0)}\n"
+        f"🚫 <b>الروابط المحذوفة</b>: {stats.get('links_deleted', 0)}\n"
+        f"📞 <b>الأرقام المحذوفة</b>: {stats.get('phones_deleted', 0)}\n"
+        f"💰 <b>المحافظ المحذوفة</b>: {stats.get('wallets_deleted', 0)}\n"
+        f"🚫 <b>الكلمات الممنوعة</b>: {stats.get('forbidden_words', 0)}\n"
+        f"🔇 <b>عمليات الكتم</b>: {stats.get('total_mutes', 0)}\n"
+        f"🚫 <b>عمليات الحظر</b>: {stats.get('total_bans', 0)}\n"
+        f"⚠️ <b>إجمالي التحذيرات</b>: {stats.get('total_warnings', 0)}\n"
+    )
+
+    if stats.get('top_violator'):
+        report_text += (
+            f"\n🏆 <b>أكثر عضو مخالفة</b>:\n"
+            f"👤 {stats.get('top_violator')} - {stats.get('top_violator_count')} مخالفات"
+        )
+    else:
+        report_text += "\n\n🏆 <b>لا توجد مخالفات</b> هذا الأسبوع! 🎉"
+
+    report_text += "\n\n📌 <i>يتم إنشاء هذا التقرير تلقائياً كل أسبوع.</i>"
+
+    try:
+        await bot.send_message(chat_id=REPORT_CHANNEL_ID, text=report_text, parse_mode="HTML")
+        print(f"✅ تم إرسال التقرير الأسبوعي إلى القناة {REPORT_CHANNEL_ID}")
+    except Exception as e:
+        print(f"❌ فشل إرسال التقرير: {e}")
+
+
+async def generate_report_for_all_groups(context: ContextTypes.DEFAULT_TYPE):
+    """جلب جميع المجموعات التي يديرها البوت وإرسال تقرير لكل منها"""
+    if not supabase:
+        return
+
+    try:
+        # جلب جميع chat_id من جدول group_settings (أو violations_log)
+        res = supabase.table("group_settings").select("chat_id").execute()
+        if not res.data:
+            return
+
+        for item in res.data:
+            chat_id = item.get("chat_id")
+            if chat_id:
+                await send_weekly_report(context.bot, chat_id)
+    except Exception as e:
+        print(f"⚠️ خطأ في إنشاء التقارير: {e}")
+
+
+async def force_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر لتشغيل التقرير يدوياً (للمشرفين)"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+        return
+
+    await update.message.reply_text("📊 جاري إنشاء التقرير الأسبوعي...")
+    await send_weekly_report(context.bot, chat_id)
+    await update.message.reply_text("✅ تم إرسال التقرير إلى قناة التقارير.")
 
 
 # ===================== أوامر المشرفين =====================
@@ -1126,7 +1265,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>منع التوجيه</b>: معطل ❌\n"
         "🔹 <b>الترحيب</b>: كابتشا + موافقة 🔐\n"
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
-        "🔹 <b>إعدادات قابلة للتخصيص</b>: ✅\n\n"
+        "🔹 <b>إعدادات قابلة للتخصيص</b>: ✅\n"
+        "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو\n"
         "/unban [ID]\n"
@@ -1137,7 +1277,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats - عرض الإحصائيات\n"
         "/setwarnings [عدد] - عدد التحذيرات قبل الحظر\n"
         "/setmutetime [دقائق] - مدة الكتم عند المخالفة الثانية\n"
-        "/setcaptchatime [ثواني] - مهلة الكابتشا\n\n"
+        "/setcaptchatime [ثواني] - مهلة الكابتشا\n"
+        "/report - تشغيل التقرير يدوياً 📊\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/rules - عرض قوانين المجموعة\n"
@@ -1496,6 +1637,9 @@ def main():
     app.add_handler(CommandHandler("setmutetime", set_mute_time))
     app.add_handler(CommandHandler("setcaptchatime", set_captcha_time))
 
+    # أمر التقرير اليدوي (جديد)
+    app.add_handler(CommandHandler("report", force_report))
+
     # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
@@ -1512,7 +1656,19 @@ def main():
     # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع رسائل محسّنة ومخصصة...")
+    # ===================== جدولة التقارير الأسبوعية (جديد) =====================
+    scheduler = AsyncIOScheduler()
+    
+    # جدولة التقرير كل يوم أحد الساعة 12:00 مساءً
+    scheduler.add_job(
+        generate_report_for_all_groups,
+        CronTrigger(day_of_week='sun', hour=12, minute=0),
+        args=[app]
+    )
+    scheduler.start()
+    print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
+
+    print("🤖 Raskov Security Bot يعمل الآن مع التقارير الدورية...")
     app.run_polling()
 
 
