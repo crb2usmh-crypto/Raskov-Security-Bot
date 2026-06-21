@@ -488,8 +488,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/lockforward - تبديل\n"
         "/stats - عرض إحصائيات البوت 📊\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
+        "/rules - عرض قوانين المجموعة 📜\n"
         "/warnings - عرض مخالفاتك\n"
         "/testlog - اختبار اللوجات",
+        parse_mode="HTML"
+    )
+
+
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قوانين المجموعة"""
+    await update.message.reply_text(
+        GROUP_RULES,
         parse_mode="HTML"
     )
 
@@ -511,30 +520,26 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ فشل الإرسال: {e}")
 
 
-# ===================== أمر الإحصائيات (جديد) =====================
+# ===================== أمر الإحصائيات =====================
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض إحصائيات البوت (للمشرفين فقط)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    # التحقق من صلاحيات المشرف
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
-    # جلب الإحصائيات من قاعدة البيانات المؤقتة
     total_users_with_warnings = len(warnings_db)
     total_warnings = sum(warnings_db.values())
-    total_banned = 0  # لا نحتفظ بسجل للمحظورين في هذه النسخة
-    
-    # عدد الأعضاء في المجموعة
+    total_banned = 0
+
     try:
         chat_members_count = await context.bot.get_chat_member_count(chat_id)
     except:
         chat_members_count = "غير معروف"
 
-    # إنشاء رسالة الإحصائيات
     stats_message = (
         "📊 <b>إحصائيات البوت</b>\n\n"
         f"👥 <b>عدد أعضاء المجموعة</b>: {chat_members_count}\n"
@@ -777,9 +782,10 @@ def main():
     app.add_handler(CommandHandler("locklinks", toggle_lock_links))
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
-    
-    # ✅ أمر الإحصائيات الجديد
     app.add_handler(CommandHandler("stats", stats))
+    
+    # ✅ أمر القوانين الجديد
+    app.add_handler(CommandHandler("rules", rules))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
@@ -791,7 +797,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة، كتم 10 دقائق، وأمر /stats...")
+    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة، كتم 10 دقائق، /stats، و /rules...")
     app.run_polling()
 
 
