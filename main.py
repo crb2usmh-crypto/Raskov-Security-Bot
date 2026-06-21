@@ -197,6 +197,24 @@ def update_group_setting(chat_id: int, setting_name: str, value: bool):
         print(f"⚠️ خطأ في تحديث الإعدادات: {e}")
 
 
+# ===================== دوال إحصائيات المجموعة (جديدة) =====================
+
+def update_group_stats(chat_id: int, members: int, violations: int, bans: int):
+    """تحديث أو إدراج إحصائيات المجموعة في Supabase"""
+    if not supabase:
+        return
+    try:
+        supabase.table("group_stats").upsert({
+            "chat_id": chat_id,
+            "members_count": members,
+            "violations_count": violations,
+            "bans_count": bans,
+            "updated_at": datetime.now().isoformat()
+        }).execute()
+    except Exception as e:
+        print(f"⚠️ خطأ في تحديث إحصائيات المجموعة: {e}")
+
+
 # ===================== دوال المساعدة =====================
 
 async def is_admin(bot, chat_id, user_id):
@@ -898,7 +916,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode="HTML")
 
 
-# ===================== التقارير الدورية (محسّنة) =====================
+# ===================== التقارير الدورية =====================
 
 async def send_weekly_report(bot):
     if not REPORT_CHANNEL_ID:
@@ -955,7 +973,33 @@ async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_weekly_report(context.bot)
 
 
-# ===================== المعالج الرئيسي (مع رسائل محسّنة) =====================
+# ===================== تحديث إحصائيات المجموعات (جديد) =====================
+
+async def update_all_group_stats(context: ContextTypes.DEFAULT_TYPE):
+    """تحديث إحصائيات جميع المجموعات التي يديرها البوت"""
+    if not supabase:
+        return
+    try:
+        res = supabase.table("group_settings").select("chat_id").execute()
+        if not res.data:
+            return
+        for item in res.data:
+            chat_id = item.get("chat_id")
+            if chat_id:
+                try:
+                    members = await context.bot.get_chat_member_count(chat_id)
+                    viol_res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).execute()
+                    violations = viol_res.count if viol_res.count else 0
+                    ban_res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "🚫 حظر").execute()
+                    bans = ban_res.count if ban_res.count else 0
+                    update_group_stats(chat_id, members, violations, bans)
+                except Exception as e:
+                    print(f"⚠️ فشل تحديث إحصائيات المجموعة {chat_id}: {e}")
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب المجموعات: {e}")
+
+
+# ===================== المعالج الرئيسي =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1222,15 +1266,26 @@ def main():
     # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    # جدولة التقارير الأسبوعية
+    # جدولة المهام
     scheduler = AsyncIOScheduler()
+    
+    # التقارير الأسبوعية (كل يوم أحد الساعة 12:00)
     scheduler.add_job(
         weekly_report_job,
         CronTrigger(day_of_week='sun', hour=12, minute=0),
         args=[app]
     )
-    scheduler.start()
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
+
+    # تحديث إحصائيات المجموعات (كل ساعة عند الدقيقة 0)
+    scheduler.add_job(
+        update_all_group_stats,
+        CronTrigger(minute=0),
+        args=[app]
+    )
+    print("📈 تم جدولة تحديث إحصائيات المجموعات (كل ساعة)")
+
+    scheduler.start()
 
     print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات والرسائل المحسّنة...")
     app.run_polling()
