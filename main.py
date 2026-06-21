@@ -174,7 +174,7 @@ async def check_flood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     chat_title = chat.title or "المجموعة"
-    
+
     try:
         bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
         if bot_member.status not in ["administrator", "creator"]:
@@ -214,6 +214,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except:
                 pass
 
+        # ✅ استخدام job_queue إذا كان متاحاً
         if context.job_queue:
             job = context.job_queue.run_once(
                 callback=kick_non_agreed,
@@ -223,7 +224,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             pending_approvals[user.id] = job
         else:
-            print("⚠️ JobQueue غير مفعل، لن يتم طرد المستخدم تلقائياً.")
+            print("⚠️ job_queue غير متاح، لن يتم طرد المستخدم تلقائياً.")
 
         await send_log(
             bot=context.bot,
@@ -652,7 +653,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== تشغيل البوت =====================
 
 def main():
-    app = Application.builder().token(TOKEN).job_queue().build()
+    # ✅ نستخدم build() بدون job_queue()، والمكتبة تفعله تلقائياً عند تثبيت [job-queue]
+    app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
