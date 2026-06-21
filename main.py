@@ -3,6 +3,9 @@ import re
 from datetime import datetime, timedelta
 import telegram
 
+# ===================== استيراد Supabase =====================
+from supabase import create_client, Client
+
 # ===================== استيراد جدولة المهام =====================
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -20,7 +23,21 @@ from telegram.ext import (
 # ===================== إعدادات البيئة =====================
 TOKEN = os.getenv("BOT_TOKEN")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
-REPORT_CHANNEL_ID = os.getenv("REPORT_CHANNEL_ID")  # ✅ قناة التقارير الأسبوعية
+REPORT_CHANNEL_ID = os.getenv("REPORT_CHANNEL_ID")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# ===================== تهيئة Supabase =====================
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ تم الاتصال بـ Supabase بنجاح")
+    except Exception as e:
+        print(f"❌ فشل الاتصال بـ Supabase: {e}")
+        supabase = None
+else:
+    supabase = None
+    print("⚠️ Supabase غير مضبوط، سيتم استخدام الذاكرة المؤقتة")
 
 # ===================== القوانين =====================
 GROUP_RULES = (
@@ -54,7 +71,7 @@ LOCK_FORWARD = False
 
 # ===================== الكلمات الممنوعة =====================
 FORBIDDEN_WORDS = [
-    "نصب", "احتيال", "سبام", "إعلان", "دعاية", 
+    "نصب", "احتيال", "سبام", "إعلان", "دعاية",
     "تزوير", "اختراق", "أرباح سريعة", "استثمار مضمون",
     "بيع باي", "شراء باي", "سعر باي", "تداول باي",
     "scam", "spam", "hack", "cheat", "fraud", "phishing",
@@ -72,13 +89,118 @@ WALLET_PATTERN = re.compile(
 )
 PHONE_PATTERN = re.compile(r"\+?\d{7,15}")
 
-# ===================== التخزين المؤقت =====================
-warnings_db = {}
-user_messages = {}
+# ===================== التخزين المؤقت (احتياطي) =====================
+warnings_db = {}          # مستخدم فقط إذا تعذر الاتصال بـ Supabase
+user_messages = {}        # يبقى في الذاكرة (مؤقت)
 pending_approvals = {}
 
-# ===================== تخزين سجل المخالفات (للتقارير) =====================
-violations_log = []  # list of dicts: {"user_id": int, "type": str, "timestamp": datetime}
+
+# ===================== دوال Supabase الأساسية =====================
+
+def get_warnings(user_id: int) -> int:
+    """جلب عدد مخالفات المستخدم من Supabase أو الذاكرة"""
+    if not supabase:
+        return warnings_db.get(user_id, 0)
+    try:
+        res = supabase.table("warnings").select("count").eq("user_id", user_id).execute()
+        if res.data:
+            return res.data[0].get("count", 0)
+        return 0
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب المخالفات: {e}")
+        return warnings_db.get(user_id, 0)
+
+
+def increment_warning(user_id: int, first_name: str) -> int:
+    """زيادة عدد مخالفات المستخدم بمقدار 1 في Supabase أو الذاكرة"""
+    if not supabase:
+        warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
+        return warnings_db[user_id]
+    try:
+        res = supabase.table("warnings").select("count").eq("user_id", user_id).execute()
+        if res.data:
+            current = res.data[0].get("count", 0)
+            new_count = current + 1
+            supabase.table("warnings").update({"count": new_count}).eq("user_id", user_id).execute()
+            return new_count
+        else:
+            supabase.table("warnings").insert({
+                "user_id": user_id,
+                "first_name": first_name,
+                "count": 1
+            }).execute()
+            return 1
+    except Exception as e:
+        print(f"⚠️ خطأ في زيادة المخالفات: {e}")
+        warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
+        return warnings_db[user_id]
+
+
+def reset_warnings_db(user_id: int):
+    """إعادة تعيين مخالفات المستخدم في Supabase أو الذاكرة"""
+    if not supabase:
+        if user_id in warnings_db:
+            del warnings_db[user_id]
+        return
+    try:
+        supabase.table("warnings").delete().eq("user_id", user_id).execute()
+    except Exception as e:
+        print(f"⚠️ خطأ في إعادة التعيين: {e}")
+        if user_id in warnings_db:
+            del warnings_db[user_id]
+
+
+def log_violation(user_id: int, chat_id: int, violation_type: str, content: str):
+    """تسجيل المخالفة في Supabase (للإحصائيات)"""
+    if not supabase:
+        return
+    try:
+        supabase.table("violations_log").insert({
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "type": violation_type,
+            "content": content[:200]
+        }).execute()
+    except Exception as e:
+        print(f"⚠️ خطأ في تسجيل المخالفة: {e}")
+
+
+def get_group_settings(chat_id: int) -> dict:
+    """جلب إعدادات المجموعة من Supabase أو الذاكرة"""
+    default = {"lock_links": True, "lock_media": False, "lock_forward": False}
+    if not supabase:
+        return default
+    try:
+        res = supabase.table("group_settings").select("*").eq("chat_id", chat_id).execute()
+        if res.data:
+            data = res.data[0]
+            return {
+                "lock_links": data.get("lock_links", True),
+                "lock_media": data.get("lock_media", False),
+                "lock_forward": data.get("lock_forward", False),
+            }
+        else:
+            # إنشاء سجل افتراضي للمجموعة الجديدة
+            supabase.table("group_settings").insert({
+                "chat_id": chat_id,
+                "lock_links": True,
+                "lock_media": False,
+                "lock_forward": False
+            }).execute()
+            return default
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب الإعدادات: {e}")
+        return default
+
+
+def update_group_setting(chat_id: int, setting_name: str, value: bool):
+    """تحديث إعداد معين في Supabase أو الذاكرة"""
+    if not supabase:
+        return
+    try:
+        supabase.table("group_settings").update({setting_name: value}).eq("chat_id", chat_id).execute()
+    except Exception as e:
+        print(f"⚠️ خطأ في تحديث الإعدادات: {e}")
 
 
 # ===================== دوال المساعدة =====================
@@ -428,8 +550,7 @@ async def reset_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     target = update.message.reply_to_message.from_user
     target_id = target.id
-    if target_id in warnings_db:
-        del warnings_db[target_id]
+    reset_warnings_db(target_id)
 
     await update.message.reply_text(f"✅ تم إعادة تعيين مخالفات {target.first_name}.")
     await send_log(
@@ -442,36 +563,42 @@ async def reset_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def toggle_lock_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global LOCK_LINKS
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ للمشرفين فقط.")
         return
-    LOCK_LINKS = not LOCK_LINKS
-    await update.message.reply_text(f"🔗 منع الروابط: {'مفعل ✅' if LOCK_LINKS else 'معطل ❌'}")
+    
+    settings = get_group_settings(chat_id)
+    new_value = not settings.get("lock_links", True)
+    update_group_setting(chat_id, "lock_links", new_value)
+    await update.message.reply_text(f"🔗 منع الروابط: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
 async def toggle_lock_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global LOCK_MEDIA
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ للمشرفين فقط.")
         return
-    LOCK_MEDIA = not LOCK_MEDIA
-    await update.message.reply_text(f"🖼️ منع الميديا: {'مفعل ✅' if LOCK_MEDIA else 'معطل ❌'}")
+    
+    settings = get_group_settings(chat_id)
+    new_value = not settings.get("lock_media", False)
+    update_group_setting(chat_id, "lock_media", new_value)
+    await update.message.reply_text(f"🖼️ منع الميديا: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
 async def toggle_lock_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global LOCK_FORWARD
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ للمشرفين فقط.")
         return
-    LOCK_FORWARD = not LOCK_FORWARD
-    await update.message.reply_text(f"↩️ منع التوجيه: {'مفعل ✅' if LOCK_FORWARD else 'معطل ❌'}")
+    
+    settings = get_group_settings(chat_id)
+    new_value = not settings.get("lock_forward", False)
+    update_group_setting(chat_id, "lock_forward", new_value)
+    await update.message.reply_text(f"↩️ منع التوجيه: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
 # ===================== الأوامر العامة =====================
@@ -487,6 +614,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>الترحيب</b>: مفعل ✅\n"
         "🔹 <b>الكلمات الممنوعة</b>: مفعلة 🚫\n"
         "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n"
+        "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
         "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو\n"
@@ -505,15 +633,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        GROUP_RULES,
-        parse_mode="HTML"
-    )
+    await update.message.reply_text(GROUP_RULES, parse_mode="HTML")
 
 
 async def warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    count = warnings_db.get(user_id, 0)
+    count = get_warnings(user_id)  # ✅ من Supabase أو الذاكرة
     await update.message.reply_text(f"⚠️ عدد مخالفاتك: {count}/3")
 
 
@@ -538,8 +663,21 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
-    total_users_with_warnings = len(warnings_db)
-    total_warnings = sum(warnings_db.values())
+    # حساب الإحصائيات
+    if supabase:
+        try:
+            # جلب عدد المخالفين وإجمالي التحذيرات من Supabase
+            res = supabase.table("warnings").select("count").execute()
+            total_warnings = sum(item.get("count", 0) for item in res.data) if res.data else 0
+            res = supabase.table("warnings").select("user_id", count="exact").execute()
+            total_users_with_warnings = res.count if res.count else 0
+        except:
+            total_warnings = sum(warnings_db.values())
+            total_users_with_warnings = len(warnings_db)
+    else:
+        total_warnings = sum(warnings_db.values())
+        total_users_with_warnings = len(warnings_db)
+
     total_banned = 0
 
     try:
@@ -559,28 +697,33 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode="HTML")
 
 
-# ===================== التقارير الدورية (جديد) =====================
+# ===================== التقارير الدورية =====================
 
 async def send_weekly_report(bot):
-    """إرسال التقرير الأسبوعي إلى قناة المشرفين"""
     if not REPORT_CHANNEL_ID:
         print("⚠️ REPORT_CHANNEL_ID غير مضبوط، لن يتم إرسال التقرير.")
         return
 
-    # حساب الإحصائيات
-    total_users_with_warnings = len(warnings_db)
-    total_warnings = sum(warnings_db.values())
-    
-    # أكثر عضو مخالفة
+    if supabase:
+        try:
+            res = supabase.table("warnings").select("count").execute()
+            total_warnings = sum(item.get("count", 0) for item in res.data) if res.data else 0
+            res = supabase.table("warnings").select("user_id", count="exact").execute()
+            total_users_with_warnings = res.count if res.count else 0
+        except:
+            total_warnings = sum(warnings_db.values())
+            total_users_with_warnings = len(warnings_db)
+    else:
+        total_warnings = sum(warnings_db.values())
+        total_users_with_warnings = len(warnings_db)
+
     top_violator = None
     top_violator_count = 0
     for user_id, count in warnings_db.items():
         if count > top_violator_count:
             top_violator_count = count
-            # نحاول جلب اسم المستخدم (محلياً، لا يمكننا جلب الاسم من الذاكرة)
             top_violator = f"ID: {user_id}"
-    
-    # تاريخ التقرير
+
     report_date = datetime.now().strftime("%A, %d %B %Y")
     week_start = (datetime.now() - timedelta(days=7)).strftime("%d/%m/%Y")
     week_end = datetime.now().strftime("%d/%m/%Y")
@@ -608,7 +751,6 @@ async def send_weekly_report(bot):
 
 
 async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
-    """المهمة المجدولة لإرسال التقرير"""
     await send_weekly_report(context.bot)
 
 
@@ -623,7 +765,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_title = update.effective_chat.title or "المجموعة"
     user = update.effective_user
 
-    # 1. منع الأعضاء غير الموافقين على القوانين
     if user_id in pending_approvals:
         try:
             await update.message.delete()
@@ -635,16 +776,19 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    # 2. فحص التكرار
     if await check_flood(update, context):
         return
 
-    # 3. تجاهل المشرفين
     if await is_admin(context.bot, chat_id, user_id):
         return
 
-    # 4. فحص الميديا
-    if LOCK_MEDIA and (update.message.photo or update.message.video):
+    # ✅ جلب الإعدادات من Supabase أو الذاكرة
+    settings = get_group_settings(chat_id)
+    lock_links = settings.get("lock_links", True)
+    lock_media = settings.get("lock_media", False)
+    lock_forward = settings.get("lock_forward", False)
+
+    if lock_media and (update.message.photo or update.message.video):
         try:
             await update.message.delete()
         except:
@@ -662,8 +806,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 5. فحص الرسائل المعاد توجيهها
-    if LOCK_FORWARD and update.message.forward_date:
+    if lock_forward and update.message.forward_date:
         try:
             await update.message.delete()
         except:
@@ -681,13 +824,11 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 6. فحص النص
     if not update.message.text:
         return
 
     original_text = update.message.text
 
-    # ✅ فحص الكلمات الممنوعة
     has_forbidden, found_word = contains_forbidden_word(original_text)
     if has_forbidden:
         try:
@@ -703,8 +844,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=f"🚫 كلمة ممنوعة: '{found_word}'"
         )
 
-        warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
-        count = warnings_db[user_id]
+        # ✅ استخدام Supabase أو الذاكرة
+        count = increment_warning(user_id, user.first_name)
 
         if count == 1:
             await context.bot.send_message(
@@ -728,7 +869,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم، تأكد من صلاحيات البوت)"
+                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم)"
                 )
         elif count >= 3:
             try:
@@ -737,8 +878,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=chat_id,
                     text=f"🚫 تم حظر {user.first_name} تلقائياً (3/3)."
                 )
-                if user_id in warnings_db:
-                    del warnings_db[user_id]
+                reset_warnings_db(user_id)
             except Exception as e:
                 await send_log(
                     bot=context.bot,
@@ -749,7 +889,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         return
 
-    # 7. فحص الروابط والأرقام والمحافظ
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
     wallet_cleaned = re.sub(r'\s', '', original_text)
     link_cleaned = clean_obfuscated_text(original_text)
@@ -763,7 +902,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif not is_violation and PHONE_PATTERN.search(phone_cleaned):
         is_violation = True
         violation_type = "رقم هاتف"
-    elif not is_violation and LOCK_LINKS and LINK_PATTERN.search(link_cleaned):
+    elif not is_violation and lock_links and LINK_PATTERN.search(link_cleaned):
         is_allowed = any(domain in link_cleaned.lower() for domain in ALLOWED_DOMAINS)
         if not is_allowed:
             is_violation = True
@@ -784,8 +923,11 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=violation_type
         )
 
-        warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
-        count = warnings_db[user_id]
+        # ✅ تسجيل المخالفة في Supabase (للإحصائيات)
+        log_violation(user_id, chat_id, violation_type, original_text)
+
+        # ✅ زيادة المخالفات في Supabase أو الذاكرة
+        count = increment_warning(user_id, user.first_name)
 
         if count == 1:
             await context.bot.send_message(
@@ -809,7 +951,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم، تأكد من صلاحيات البوت)"
+                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم)"
                 )
         elif count >= 3:
             try:
@@ -818,8 +960,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=chat_id,
                     text=f"🚫 تم حظر {user.first_name} تلقائياً (3/3)."
                 )
-                if user_id in warnings_db:
-                    del warnings_db[user_id]
+                reset_warnings_db(user_id)
             except Exception as e:
                 await send_log(
                     bot=context.bot,
@@ -835,7 +976,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
-    # أوامر المشرفين
     app.add_handler(CommandHandler("ban", ban_user))
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("resetwarnings", reset_warnings))
@@ -844,31 +984,28 @@ def main():
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
 
-    # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
     app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("testlog", test_log))
 
-    # معالجات الأحداث
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_member))
     app.add_handler(CallbackQueryHandler(handle_rules_approval, pattern="^agree_rules_"))
 
-    # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    # ===================== جدولة التقارير الأسبوعية (جديد) =====================
+    # ===================== جدولة التقارير الأسبوعية =====================
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         weekly_report_job,
-        CronTrigger(day_of_week='sun', hour=12, minute=0),  # كل يوم أحد الساعة 12:00
+        CronTrigger(day_of_week='sun', hour=12, minute=0),
         args=[app]
     )
     scheduler.start()
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
 
-    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة، كتم 10 دقائق، /stats، /rules، والتقارير الدورية...")
+    print("🤖 Raskov Security Bot يعمل الآن مع قاعدة بيانات Supabase...")
     app.run_polling()
 
 
