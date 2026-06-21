@@ -11,7 +11,7 @@ from supabase import create_client, Client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, WebAppInfo, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -1505,12 +1505,12 @@ async def force_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ زر ويب باستخدام InlineKeyboardButton (أكثر استقراراً)
-    web_app_button = InlineKeyboardButton(
+    # ✅ زر ويب باستخدام ReplyKeyboardMarkup (مدعوم رسمياً)
+    web_app_button = KeyboardButton(
         text="📊 فتح لوحة Pi",
         web_app=WebAppInfo(url="https://crb2usmh-crypto.github.io/Pi-Dashboard/")
     )
-    keyboard = InlineKeyboardMarkup([[web_app_button]])
+    reply_markup = ReplyKeyboardMarkup([[web_app_button]], resize_keyboard=True)
 
     await update.message.reply_text(
         "🛡️ <b>Raskov Security Bot v6.0</b>\n\n"
@@ -1546,7 +1546,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/testlog - اختبار اللوجات\n\n"
         "📊 <b>لوحة Pi Dashboard</b>:\n"
         "اضغط على الزر أدناه لفتح لوحة التحكم.",
-        reply_markup=keyboard,
+        reply_markup=reply_markup,
         parse_mode="HTML"
     )
 
@@ -1930,7 +1930,7 @@ def main():
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
 
     print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)  # ✅ حل مشكلة Conflict
 
 
 if __name__ == "__main__":
