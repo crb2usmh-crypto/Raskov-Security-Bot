@@ -10,7 +10,7 @@ from supabase import create_client, Client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, WebAppInfo, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -89,16 +89,15 @@ WALLET_PATTERN = re.compile(
 )
 PHONE_PATTERN = re.compile(r"\+?\d{7,15}")
 
-# ===================== التخزين المؤقت (احتياطي) =====================
-warnings_db = {}          # مستخدم فقط إذا تعذر الاتصال بـ Supabase
-user_messages = {}        # يبقى في الذاكرة (مؤقت)
+# ===================== التخزين المؤقت =====================
+warnings_db = {}
+user_messages = {}
 pending_approvals = {}
 
 
 # ===================== دوال Supabase الأساسية =====================
 
 def get_warnings(user_id: int) -> int:
-    """جلب عدد مخالفات المستخدم من Supabase أو الذاكرة"""
     if not supabase:
         return warnings_db.get(user_id, 0)
     try:
@@ -112,7 +111,6 @@ def get_warnings(user_id: int) -> int:
 
 
 def increment_warning(user_id: int, first_name: str) -> int:
-    """زيادة عدد مخالفات المستخدم بمقدار 1 في Supabase أو الذاكرة"""
     if not supabase:
         warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
         return warnings_db[user_id]
@@ -137,7 +135,6 @@ def increment_warning(user_id: int, first_name: str) -> int:
 
 
 def reset_warnings_db(user_id: int):
-    """إعادة تعيين مخالفات المستخدم في Supabase أو الذاكرة"""
     if not supabase:
         if user_id in warnings_db:
             del warnings_db[user_id]
@@ -151,7 +148,6 @@ def reset_warnings_db(user_id: int):
 
 
 def log_violation(user_id: int, chat_id: int, violation_type: str, content: str):
-    """تسجيل المخالفة في Supabase (للإحصائيات)"""
     if not supabase:
         return
     try:
@@ -166,7 +162,6 @@ def log_violation(user_id: int, chat_id: int, violation_type: str, content: str)
 
 
 def get_group_settings(chat_id: int) -> dict:
-    """جلب إعدادات المجموعة من Supabase أو الذاكرة"""
     default = {"lock_links": True, "lock_media": False, "lock_forward": False}
     if not supabase:
         return default
@@ -180,7 +175,6 @@ def get_group_settings(chat_id: int) -> dict:
                 "lock_forward": data.get("lock_forward", False),
             }
         else:
-            # إنشاء سجل افتراضي للمجموعة الجديدة
             supabase.table("group_settings").insert({
                 "chat_id": chat_id,
                 "lock_links": True,
@@ -194,7 +188,6 @@ def get_group_settings(chat_id: int) -> dict:
 
 
 def update_group_setting(chat_id: int, setting_name: str, value: bool):
-    """تحديث إعداد معين في Supabase أو الذاكرة"""
     if not supabase:
         return
     try:
@@ -252,6 +245,9 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "❌ طرد": "⛔",
         "🚫 كلمة ممنوعة": "🚫",
         "🔇 كتم 10 دقائق": "🔇",
+        "⚠️ تحذير يدوي": "⚠️",
+        "🔇 كتم يدوي": "🔇",
+        "👢 طرد": "👢",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -280,6 +276,19 @@ async def mute_user(bot, chat_id, user_id, duration_minutes):
         return True
     except Exception as e:
         print(f"❌ فشل الكتم: {e}")
+        return False
+
+
+async def unmute_user(bot, chat_id, user_id):
+    try:
+        await bot.restrict_chat_member(
+            chat_id=chat_id,
+            user_id=user_id,
+            permissions=ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
+        )
+        return True
+    except Exception as e:
+        print(f"❌ فشل فك الكتم: {e}")
         return False
 
 
@@ -477,7 +486,7 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===================== أوامر المشرفين =====================
+# ===================== أوامر المشرفين الأساسية =====================
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -568,7 +577,7 @@ async def toggle_lock_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ للمشرفين فقط.")
         return
-    
+
     settings = get_group_settings(chat_id)
     new_value = not settings.get("lock_links", True)
     update_group_setting(chat_id, "lock_links", new_value)
@@ -581,7 +590,7 @@ async def toggle_lock_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ للمشرفين فقط.")
         return
-    
+
     settings = get_group_settings(chat_id)
     new_value = not settings.get("lock_media", False)
     update_group_setting(chat_id, "lock_media", new_value)
@@ -594,16 +603,169 @@ async def toggle_lock_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ للمشرفين فقط.")
         return
-    
+
     settings = get_group_settings(chat_id)
     new_value = not settings.get("lock_forward", False)
     update_group_setting(chat_id, "lock_forward", new_value)
     await update.message.reply_text(f"↩️ منع التوجيه: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
+# ===================== الأوامر اليدوية (جديدة) =====================
+
+async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحذير يدوي (يزيد المخالفات)"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ للمشرفين فقط.")
+        return
+
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ ارد على رسالة العضو المستهدف.")
+        return
+
+    target = update.message.reply_to_message.from_user
+    target_id = target.id
+
+    if await is_admin(context.bot, chat_id, target_id):
+        await update.message.reply_text("❌ لا يمكنك تحذير مشرف.")
+        return
+
+    count = increment_warning(target_id, target.first_name)
+
+    await update.message.reply_text(f"⚠️ تم تحذير {target.first_name} (المخالفة {count}).")
+
+    await send_log(
+        bot=context.bot,
+        user=update.effective_user,
+        chat_title=update.effective_chat.title or "المجموعة",
+        deleted_text=f"تحذير يدوي لـ {target.first_name} (المخالفة {count})",
+        violation_type="⚠️ تحذير يدوي"
+    )
+
+
+async def mute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كتم يدوي لمدة محددة (بالدقائق)"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ للمشرفين فقط.")
+        return
+
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ ارد على رسالة العضو المستهدف.")
+        return
+
+    target = update.message.reply_to_message.from_user
+    target_id = target.id
+
+    if await is_admin(context.bot, chat_id, target_id):
+        await update.message.reply_text("❌ لا يمكنك كتم مشرف.")
+        return
+
+    args = context.args
+    duration = 5  # افتراضي 5 دقائق
+    if args:
+        try:
+            duration = int(args[0])
+            if duration < 1:
+                duration = 1
+            if duration > 60:
+                duration = 60
+        except ValueError:
+            await update.message.reply_text("⚠️ مدة غير صحيحة، سيتم استخدام 5 دقائق.")
+
+    success = await mute_user(context.bot, chat_id, target_id, duration)
+    if success:
+        await update.message.reply_text(f"🔇 تم كتم {target.first_name} لمدة {duration} دقائق.")
+        await send_log(
+            bot=context.bot,
+            user=update.effective_user,
+            chat_title=update.effective_chat.title or "المجموعة",
+            deleted_text=f"كتم يدوي لـ {target.first_name} لمدة {duration} دقائق",
+            violation_type="🔇 كتم يدوي"
+        )
+    else:
+        await update.message.reply_text("❌ فشل الكتم. تأكد من صلاحيات البوت.")
+
+
+async def unmute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """فك الكتم اليدوي"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ للمشرفين فقط.")
+        return
+
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ ارد على رسالة العضو المستهدف.")
+        return
+
+    target = update.message.reply_to_message.from_user
+    target_id = target.id
+
+    success = await unmute_user(context.bot, chat_id, target_id)
+    if success:
+        await update.message.reply_text(f"✅ تم فك الكتم عن {target.first_name}.")
+        await send_log(
+            bot=context.bot,
+            user=update.effective_user,
+            chat_title=update.effective_chat.title or "المجموعة",
+            deleted_text=f"فك كتم يدوي لـ {target.first_name}",
+            violation_type="⚠️ إدارة (فك كتم)"
+        )
+    else:
+        await update.message.reply_text("❌ فشل فك الكتم.")
+
+
+async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طرد عضو (بدون حظر دائم)"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ للمشرفين فقط.")
+        return
+
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ ارد على رسالة العضو المستهدف.")
+        return
+
+    target = update.message.reply_to_message.from_user
+    target_id = target.id
+
+    if await is_admin(context.bot, chat_id, target_id):
+        await update.message.reply_text("❌ لا يمكنك طرد مشرف.")
+        return
+
+    try:
+        await context.bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
+        await context.bot.unban_chat_member(chat_id=chat_id, user_id=target_id)  # فك الحظر فوراً (طرد فقط)
+        await update.message.reply_text(f"👢 تم طرد {target.first_name}.")
+        await send_log(
+            bot=context.bot,
+            user=update.effective_user,
+            chat_title=update.effective_chat.title or "المجموعة",
+            deleted_text=f"طرد {target.first_name}",
+            violation_type="👢 طرد"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ فشل الطرد: {e}")
+
+
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ زر فتح التطبيق المصغر (يظهر في لوحة المفاتيح السفلية)
+    web_app_button = KeyboardButton(
+        text="📊 فتح لوحة Pi",
+        web_app=WebAppInfo(url="https://crb2usmh-crypto.github.io/Pi-Dashboard/")
+    )
+    reply_markup = ReplyKeyboardMarkup([[web_app_button]], resize_keyboard=True)
+
     await update.message.reply_text(
         "🛡️ <b>Raskov Security Bot v6.0</b>\n\n"
         "🔹 <b>القائمة البيضاء</b>: minepi.com, pi.app\n"
@@ -623,11 +785,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/locklinks - تبديل\n"
         "/lockmedia - تبديل\n"
         "/lockforward - تبديل\n"
-        "/stats - عرض إحصائيات البوت 📊\n\n"
+        "/stats - عرض إحصائيات البوت 📊\n"
+        "/warn - تحذير يدوي (بالرد)\n"
+        "/mute [دقائق] - كتم يدوي (بالرد)\n"
+        "/kick - طرد عضو (بالرد)\n"
+        "/unmute - فك الكتم (بالرد)\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/rules - عرض قوانين المجموعة 📜\n"
         "/warnings - عرض مخالفاتك\n"
-        "/testlog - اختبار اللوجات",
+        "/testlog - اختبار اللوجات\n\n"
+        "📊 <b>لوحة Pi Dashboard</b>:\n"
+        "اضغط على الزر أدناه لفتح لوحة التحكم.",
+        reply_markup=reply_markup,
         parse_mode="HTML"
     )
 
@@ -638,7 +807,7 @@ async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    count = get_warnings(user_id)  # ✅ من Supabase أو الذاكرة
+    count = get_warnings(user_id)
     await update.message.reply_text(f"⚠️ عدد مخالفاتك: {count}/3")
 
 
@@ -663,10 +832,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
-    # حساب الإحصائيات
     if supabase:
         try:
-            # جلب عدد المخالفين وإجمالي التحذيرات من Supabase
             res = supabase.table("warnings").select("count").execute()
             total_warnings = sum(item.get("count", 0) for item in res.data) if res.data else 0
             res = supabase.table("warnings").select("user_id", count="exact").execute()
@@ -735,7 +902,7 @@ async def send_weekly_report(bot):
         f"🛡️ <b>إجمالي المخالفات</b>: {total_warnings}\n"
         f"👤 <b>الأعضاء المخالفين</b>: {total_users_with_warnings}\n"
     )
-    
+
     if top_violator:
         report_message += f"🏆 <b>أكثر عضو مخالفة</b>: {top_violator} ({top_violator_count} مخالفات)\n"
     else:
@@ -765,6 +932,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_title = update.effective_chat.title or "المجموعة"
     user = update.effective_user
 
+    # 1. منع الأعضاء غير الموافقين على القوانين
     if user_id in pending_approvals:
         try:
             await update.message.delete()
@@ -776,18 +944,21 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
+    # 2. فحص التكرار
     if await check_flood(update, context):
         return
 
+    # 3. تجاهل المشرفين
     if await is_admin(context.bot, chat_id, user_id):
         return
 
-    # ✅ جلب الإعدادات من Supabase أو الذاكرة
+    # جلب الإعدادات
     settings = get_group_settings(chat_id)
     lock_links = settings.get("lock_links", True)
     lock_media = settings.get("lock_media", False)
     lock_forward = settings.get("lock_forward", False)
 
+    # 4. فحص الميديا
     if lock_media and (update.message.photo or update.message.video):
         try:
             await update.message.delete()
@@ -806,6 +977,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 5. فحص الرسائل المعاد توجيهها
     if lock_forward and update.message.forward_date:
         try:
             await update.message.delete()
@@ -824,18 +996,20 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 6. فحص النص
     if not update.message.text:
         return
 
     original_text = update.message.text
 
+    # 7. فحص الكلمات الممنوعة
     has_forbidden, found_word = contains_forbidden_word(original_text)
     if has_forbidden:
         try:
             await update.message.delete()
         except:
             pass
-        
+
         await send_log(
             bot=context.bot,
             user=user,
@@ -844,7 +1018,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=f"🚫 كلمة ممنوعة: '{found_word}'"
         )
 
-        # ✅ استخدام Supabase أو الذاكرة
         count = increment_warning(user_id, user.first_name)
 
         if count == 1:
@@ -889,6 +1062,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         return
 
+    # 8. فحص الروابط والأرقام والمحافظ
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
     wallet_cleaned = re.sub(r'\s', '', original_text)
     link_cleaned = clean_obfuscated_text(original_text)
@@ -923,10 +1097,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=violation_type
         )
 
-        # ✅ تسجيل المخالفة في Supabase (للإحصائيات)
         log_violation(user_id, chat_id, violation_type, original_text)
 
-        # ✅ زيادة المخالفات في Supabase أو الذاكرة
         count = increment_warning(user_id, user.first_name)
 
         if count == 1:
@@ -976,6 +1148,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
+    # أوامر المشرفين الأساسية
     app.add_handler(CommandHandler("ban", ban_user))
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("resetwarnings", reset_warnings))
@@ -984,15 +1157,24 @@ def main():
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
 
+    # أوامر يدوية جديدة
+    app.add_handler(CommandHandler("warn", warn_user))
+    app.add_handler(CommandHandler("mute", mute_manual))
+    app.add_handler(CommandHandler("unmute", unmute_manual))
+    app.add_handler(CommandHandler("kick", kick_user))
+
+    # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
     app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("testlog", test_log))
 
+    # معالجات الأحداث
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_member))
     app.add_handler(CallbackQueryHandler(handle_rules_approval, pattern="^agree_rules_"))
 
+    # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
     # ===================== جدولة التقارير الأسبوعية =====================
@@ -1005,7 +1187,7 @@ def main():
     scheduler.start()
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
 
-    print("🤖 Raskov Security Bot يعمل الآن مع قاعدة بيانات Supabase...")
+    print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات...")
     app.run_polling()
 
 
