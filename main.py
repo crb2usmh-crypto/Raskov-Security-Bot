@@ -30,37 +30,43 @@ GROUP_RULES = (
 )
 
 # ===================== إعدادات الحماية =====================
-AUTO_KICK_TIMEOUT = 60          # مدة انتظار الموافقة على القوانين (ثانية)
-FLOOD_LIMIT = 5                 # عدد الرسائل المسموحة
-FLOOD_TIME = 4                  # في خلال X ثواني
-MUTE_DURATION = 5               # مدة الكتم (دقائق)
+AUTO_KICK_TIMEOUT = 60
+FLOOD_LIMIT = 5
+FLOOD_TIME = 4
+MUTE_DURATION = 5
 
 # ===================== القائمة البيضاء =====================
 ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
 
-# ===================== إعدادات القفل (افتراضية) =====================
+# ===================== إعدادات القفل =====================
 LOCK_LINKS = True
 LOCK_MEDIA = False
 LOCK_FORWARD = False
 
-# ===================== الأنماط (Regex) =====================
+# ===================== الأنماط (Regex) المُحسّنة =====================
 LINK_PATTERN = re.compile(
     r"(https?://|www\.|t\.me/|telegram\.me/|[a-zA-Z0-9-]+\.(com|net|org|io|app|xyz|me|co))",
     re.IGNORECASE
 )
-WALLET_PATTERN = re.compile(r"\b(0x[a-fA-F0-9]{40})\b", re.IGNORECASE)
-PHONE_PATTERN = re.compile(r"(?<![a-zA-Z])(\+?\d{7,15})(?![a-zA-Z])")
+
+# ✅ نمط المحفظة: يدعم 0x (إيثيريوم/BSC) و T (TRC20)
+WALLET_PATTERN = re.compile(
+    r"\b(0x[a-fA-F0-9]{40}|T[a-zA-Z0-9]{33})\b",
+    re.IGNORECASE
+)
+
+# ✅ نمط الرقم: نبحث عن 7-15 رقماً بعد تنظيف النص
+PHONE_PATTERN = re.compile(r"\+?\d{7,15}")
 
 # ===================== التخزين المؤقت =====================
-warnings_db = {}          # {user_id: count}
-user_messages = {}        # {user_id: [timestamps]}
-pending_approvals = {}    # {user_id: job_object}
+warnings_db = {}
+user_messages = {}
+pending_approvals = {}
 
 
-# ===================== دوال المساعدة الأساسية =====================
+# ===================== دوال المساعدة =====================
 
 async def is_admin(bot, chat_id, user_id):
-    """التحقق من صلاحيات المشرف"""
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         return member.status in ["administrator", "creator"]
@@ -82,7 +88,6 @@ def clean_obfuscated_text(text: str) -> str:
 
 
 async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط"):
-    """إرسال تقرير إلى قناة اللوجات"""
     if not LOG_CHANNEL_ID:
         return
     time_now = datetime.now().strftime("%I:%M %p - %d/%m/%Y")
@@ -116,7 +121,6 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
 
 
 async def mute_user(bot, chat_id, user_id, duration_minutes):
-    """كتم مستخدم لمدة محددة"""
     try:
         until_date = datetime.now() + timedelta(minutes=duration_minutes)
         await bot.restrict_chat_member(
@@ -132,7 +136,6 @@ async def mute_user(bot, chat_id, user_id, duration_minutes):
 
 
 async def check_flood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """فحص التكرار ومنع السبام"""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     now = datetime.now()
@@ -169,10 +172,9 @@ async def check_flood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
     return False
 
 
-# ===================== الترحيب والموافقة على القوانين =====================
+# ===================== الترحيب والموافقة =====================
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ترحيب بالأعضاء الجدد وطلب الموافقة على القوانين"""
     chat = update.effective_chat
     chat_title = chat.title or "المجموعة"
 
@@ -232,7 +234,6 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def kick_non_agreed(context: ContextTypes.DEFAULT_TYPE):
-    """طرد العضو إذا لم يوافق على القوانين"""
     data = context.job.data
     chat_id = data["chat_id"]
     user_id = data["user_id"]
@@ -258,7 +259,6 @@ async def kick_non_agreed(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_rules_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج الضغط على زر الموافقة"""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -303,7 +303,6 @@ async def handle_rules_approval(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """رسالة وداع عند المغادرة"""
     chat = update.effective_chat
     chat_title = chat.title or "المجموعة"
     user = update.message.left_chat_member
@@ -491,7 +490,7 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ فشل الإرسال: {e}")
 
 
-# ===================== المعالج الرئيسي =====================
+# ===================== المعالج الرئيسي (المُحسّن) =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -502,7 +501,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_title = update.effective_chat.title or "المجموعة"
     user = update.effective_user
 
-    # 1. منع الأعضاء غير الموافقين على القوانين من الكلام
+    # 1. منع الأعضاء غير الموافقين على القوانين
     if user_id in pending_approvals:
         try:
             await update.message.delete()
@@ -565,25 +564,33 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     original_text = update.message.text
-    cleaned_text = clean_obfuscated_text(original_text)
+    
+    # ✅ تنظيف النص للكشف عن الأرقام (إزالة مسافات، شرطات، أقواس)
+    phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
+    # ✅ تنظيف النص للكشف عن المحافظ (إزالة مسافات فقط)
+    wallet_cleaned = re.sub(r'\s', '', original_text)
+    # ✅ تنظيف النص للكشف عن الروابط (إزالة محاولات التمويه)
+    link_cleaned = clean_obfuscated_text(original_text)
 
     is_violation = False
     violation_type = "رابط غير مسموح"
 
-    # فحص المحفظة الرقمية
-    if WALLET_PATTERN.search(cleaned_text):
+    # فحص المحفظة الرقمية (باستخدام النص المنظف للمحافظ)
+    if WALLET_PATTERN.search(wallet_cleaned):
         is_violation = True
         violation_type = "محفظة رقمية"
-    # فحص رقم الهاتف
-    elif not is_violation and PHONE_PATTERN.search(cleaned_text):
+    
+    # فحص رقم الهاتف (باستخدام النص المنظف للأرقام)
+    elif not is_violation and PHONE_PATTERN.search(phone_cleaned):
         is_violation = True
         violation_type = "رقم هاتف"
-    # فحص الرابط (مع القائمة البيضاء)
-    elif not is_violation and LOCK_LINKS and LINK_PATTERN.search(cleaned_text):
-        is_allowed = any(domain in cleaned_text.lower() for domain in ALLOWED_DOMAINS)
+    
+    # فحص الرابط (باستخدام النص المنظف للروابط)
+    elif not is_violation and LOCK_LINKS and LINK_PATTERN.search(link_cleaned):
+        is_allowed = any(domain in link_cleaned.lower() for domain in ALLOWED_DOMAINS)
         if not is_allowed:
             is_violation = True
-            violation_type = "رابط غير مسموح" if original_text == cleaned_text else "رابط غير مسموح (ملتف)"
+            violation_type = "رابط غير مسموح" if original_text == link_cleaned else "رابط غير مسموح (ملتف)"
 
     if is_violation:
         try:
@@ -639,7 +646,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
-    # أوامر المشرفين
     app.add_handler(CommandHandler("ban", ban_user))
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("resetwarnings", reset_warnings))
@@ -647,17 +653,14 @@ def main():
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
 
-    # أوامر عامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
     app.add_handler(CommandHandler("testlog", test_log))
 
-    # معالجات الأحداث
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_member))
     app.add_handler(CallbackQueryHandler(handle_rules_approval, pattern="^agree_rules_"))
 
-    # المعالج الرئيسي (يأتي أخيراً)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
     print("🤖 Raskov Security Bot يعمل الآن بكامل ميزاته...")
