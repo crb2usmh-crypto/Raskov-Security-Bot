@@ -183,7 +183,7 @@ def update_group_setting(chat_id: int, setting_name: str, value: bool):
         print(f"⚠️ خطأ في تحديث الإعدادات: {e}")
 
 
-# ===================== دوال الإحصائيات (جديدة) =====================
+# ===================== دوال الإحصائيات =====================
 
 def get_total_violations(chat_id: int) -> int:
     """جلب إجمالي المخالفات في مجموعة معينة"""
@@ -646,7 +646,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats - عرض الإحصائيات\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
+        "/rules - عرض قوانين المجموعة\n"
         "/testlog - اختبار اللوجات",
+        parse_mode="HTML"
+    )
+
+
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قوانين المجموعة"""
+    await update.message.reply_text(
+        GROUP_RULES,
         parse_mode="HTML"
     )
 
@@ -668,19 +677,17 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ فشل الإرسال: {e}")
 
 
-# ===================== أمر الإحصائيات (جديد) =====================
+# ===================== أمر الإحصائيات =====================
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض إحصائيات البوت (للمشرفين فقط)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    # التحقق من صلاحيات المشرف
     if not await is_admin(context.bot, chat_id, user_id):
         await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
-    # جلب الإحصائيات من قاعدة البيانات
     total_violations = get_total_violations(chat_id)
     links_deleted = get_violations_by_type(chat_id, "رابط غير مسموح") + get_violations_by_type(chat_id, "رابط غير مسموح (ملتف)")
     phones_deleted = get_violations_by_type(chat_id, "رقم هاتف")
@@ -688,7 +695,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_warnings = get_total_warnings()
     users_with_warnings = get_users_with_warnings()
 
-    # إنشاء رسالة الإحصائيات
     stats_message = (
         "📊 <b>إحصائيات البوت</b>\n\n"
         f"🛡️ <b>إجمالي المخالفات</b>: {total_violations}\n"
@@ -714,7 +720,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_title = update.effective_chat.title or "المجموعة"
     user = update.effective_user
 
-    # 1. منع الأعضاء غير الموافقين على القوانين
     if user_id in pending_approvals:
         try:
             await update.message.delete()
@@ -726,21 +731,17 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    # 2. فحص التكرار
     if await check_flood(update, context):
         return
 
-    # 3. تجاهل المشرفين
     if await is_admin(context.bot, chat_id, user_id):
         return
 
-    # جلب إعدادات المجموعة من قاعدة البيانات
     settings = get_group_settings(chat_id)
     lock_links = settings.get("lock_links", True)
     lock_media = settings.get("lock_media", False)
     lock_forward = settings.get("lock_forward", False)
 
-    # 4. فحص الميديا
     if lock_media and (update.message.photo or update.message.video):
         try:
             await update.message.delete()
@@ -759,7 +760,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 5. فحص الرسائل المعاد توجيهها
     if lock_forward and update.message.forward_date:
         try:
             await update.message.delete()
@@ -778,31 +778,24 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 6. فحص النص
     if not update.message.text:
         return
 
     original_text = update.message.text
     
-    # تنظيف النص للكشف عن الأرقام (إزالة مسافات، شرطات، أقواس)
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
-    # تنظيف النص للكشف عن المحافظ (إزالة مسافات فقط)
     wallet_cleaned = re.sub(r'\s', '', original_text)
-    # تنظيف النص للكشف عن الروابط (إزالة محاولات التمويه)
     link_cleaned = clean_obfuscated_text(original_text)
 
     is_violation = False
     violation_type = "رابط غير مسموح"
 
-    # فحص المحفظة الرقمية
     if WALLET_PATTERN.search(wallet_cleaned):
         is_violation = True
         violation_type = "محفظة رقمية"
-    # فحص رقم الهاتف
     elif not is_violation and PHONE_PATTERN.search(phone_cleaned):
         is_violation = True
         violation_type = "رقم هاتف"
-    # فحص الرابط
     elif not is_violation and lock_links and LINK_PATTERN.search(link_cleaned):
         is_allowed = any(domain in link_cleaned.lower() for domain in ALLOWED_DOMAINS)
         if not is_allowed:
@@ -816,7 +809,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Delete error: {e}")
             return
 
-        # إرسال التقرير إلى قناة اللوجات
         await send_log(
             bot=context.bot,
             user=user,
@@ -825,10 +817,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=violation_type
         )
 
-        # تسجيل المخالفة في قاعدة البيانات
         log_violation(user_id, chat_id, violation_type, original_text)
 
-        # زيادة المخالفات في قاعدة البيانات
         count = increment_warning(user_id, user.first_name)
 
         if count == 1:
@@ -870,12 +860,11 @@ def main():
     app.add_handler(CommandHandler("locklinks", toggle_lock_links))
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
-    
-    # أمر الإحصائيات (جديد)
     app.add_handler(CommandHandler("stats", stats))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
+    app.add_handler(CommandHandler("rules", rules))  # ✅ أمر القوانين الجديد
     app.add_handler(CommandHandler("testlog", test_log))
 
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
@@ -884,7 +873,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع Supabase وأمر /stats...")
+    print("🤖 Raskov Security Bot يعمل الآن مع Supabase وأوامر /stats و /rules...")
     app.run_polling()
 
 
