@@ -24,7 +24,8 @@ GROUP_RULES = (
     "2️⃣ ممنوع نشر أرقام الهواتف أو المحافظ الرقمية.\n"
     "3️⃣ ممنوع التكرار السريع للرسائل (سبام).\n"
     "4️⃣ ممنوع نشر الصور أو الفيديوهات غير المفيدة.\n"
-    "5️⃣ احترام جميع الأعضاء.\n\n"
+    "5️⃣ ممنوع استخدام الكلمات الممنوعة (نصب، احتيال، سبام).\n"
+    "6️⃣ احترام جميع الأعضاء.\n\n"
     "⚠️ المخالفة = تحذير، والمخالفة الثالثة = حظر تلقائي.\n"
     "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
 )
@@ -42,6 +43,17 @@ ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
 LOCK_LINKS = True
 LOCK_MEDIA = False
 LOCK_FORWARD = False
+
+# ===================== الكلمات الممنوعة (جديدة) =====================
+FORBIDDEN_WORDS = [
+    # كلمات عربية
+    "نصب", "احتيال", "سبام", "إعلان", "دعاية", 
+    "تزوير", "اختراق", "أرباح سريعة", "استثمار مضمون",
+    "بيع باي", "شراء باي", "سعر باي", "تداول باي",
+    # كلمات إنجليزية
+    "scam", "spam", "hack", "cheat", "fraud", "phishing",
+    "promo", "advertisement", "earn money", "free money",
+]
 
 # ===================== الأنماط (Regex) المُحسّنة =====================
 LINK_PATTERN = re.compile(
@@ -87,6 +99,15 @@ def clean_obfuscated_text(text: str) -> str:
     return cleaned
 
 
+def contains_forbidden_word(text: str) -> tuple:
+    """التحقق من وجود كلمة ممنوعة في النص. تعيد (True, الكلمة) أو (False, None)"""
+    text_lower = text.lower()
+    for word in FORBIDDEN_WORDS:
+        if word.lower() in text_lower:
+            return True, word
+    return False, None
+
+
 async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط"):
     if not LOG_CHANNEL_ID:
         return
@@ -104,6 +125,7 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "👋 ترحيب": "👋",
         "🚪 مغادرة": "🚪",
         "❌ طرد": "⛔",
+        "🚫 كلمة ممنوعة": "🚫",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -458,7 +480,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>منع الروابط</b>: مفعل ✅\n"
         "🔹 <b>منع الميديا</b>: معطل ❌\n"
         "🔹 <b>منع التوجيه</b>: معطل ❌\n"
-        "🔹 <b>الترحيب</b>: مفعل ✅\n\n"
+        "🔹 <b>الترحيب</b>: مفعل ✅\n"
+        "🔹 <b>الكلمات الممنوعة</b>: مفعلة 🚫\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو\n"
         "/unban [ID]\n"
@@ -490,7 +513,7 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ فشل الإرسال: {e}")
 
 
-# ===================== المعالج الرئيسي (المُحسّن) =====================
+# ===================== المعالج الرئيسي (مع الكلمات الممنوعة) =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -564,28 +587,75 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     original_text = update.message.text
-    
-    # ✅ تنظيف النص للكشف عن الأرقام (إزالة مسافات، شرطات، أقواس)
+
+    # ✅ 6.5 فحص الكلمات الممنوعة (الأولوية القصوى)
+    has_forbidden, found_word = contains_forbidden_word(original_text)
+    if has_forbidden:
+        try:
+            await update.message.delete()
+        except:
+            pass
+        
+        await send_log(
+            bot=context.bot,
+            user=user,
+            chat_title=chat_title,
+            deleted_text=original_text,
+            violation_type=f"🚫 كلمة ممنوعة: '{found_word}'"
+        )
+
+        # تحديث المخالفات
+        warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
+        count = warnings_db[user_id]
+
+        if count == 1:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع استخدام الكلمات الممنوعة ('{found_word}')."
+            )
+        elif count == 2:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير لاستخدام كلمات ممنوعة."
+            )
+        elif count >= 3:
+            try:
+                await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🚫 تم حظر {user.first_name} تلقائياً (3/3)."
+                )
+                if user_id in warnings_db:
+                    del warnings_db[user_id]
+            except Exception as e:
+                await send_log(
+                    bot=context.bot,
+                    user=user,
+                    chat_title=chat_title,
+                    deleted_text=f"فشل الحظر: {e}",
+                    violation_type="⚠️ خطأ صلاحيات"
+                )
+        return  # نخرج من الدالة (لا نفحص الروابط بعدها)
+
+    # 7. فحص الروابط والأرقام والمحافظ (بعد الكلمات الممنوعة)
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
-    # ✅ تنظيف النص للكشف عن المحافظ (إزالة مسافات فقط)
     wallet_cleaned = re.sub(r'\s', '', original_text)
-    # ✅ تنظيف النص للكشف عن الروابط (إزالة محاولات التمويه)
     link_cleaned = clean_obfuscated_text(original_text)
 
     is_violation = False
     violation_type = "رابط غير مسموح"
 
-    # فحص المحفظة الرقمية (باستخدام النص المنظف للمحافظ)
+    # فحص المحفظة الرقمية
     if WALLET_PATTERN.search(wallet_cleaned):
         is_violation = True
         violation_type = "محفظة رقمية"
     
-    # فحص رقم الهاتف (باستخدام النص المنظف للأرقام)
+    # فحص رقم الهاتف
     elif not is_violation and PHONE_PATTERN.search(phone_cleaned):
         is_violation = True
         violation_type = "رقم هاتف"
     
-    # فحص الرابط (باستخدام النص المنظف للروابط)
+    # فحص الرابط
     elif not is_violation and LOCK_LINKS and LINK_PATTERN.search(link_cleaned):
         is_allowed = any(domain in link_cleaned.lower() for domain in ALLOWED_DOMAINS)
         if not is_allowed:
@@ -663,7 +733,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن بكامل ميزاته...")
+    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة...")
     app.run_polling()
 
 
