@@ -2,6 +2,7 @@ import os
 import re
 from datetime import datetime, timedelta
 import telegram
+import asyncio
 
 # ===================== استيراد Supabase =====================
 from supabase import create_client, Client
@@ -50,9 +51,7 @@ GROUP_RULES = (
 )
 
 # ===================== 🚫 الكلمات الممنوعة =====================
-# أضف هنا الكلمات التي تريد منعها (اكتبها بالعربية أو الإنجليزية)
 FORBIDDEN_WORDS = [
-    # كلمات عربية
     "نصب",
     "احتيال",
     "سبام",
@@ -65,8 +64,6 @@ FORBIDDEN_WORDS = [
     "أرباح سريعة",
     "استثمار مضمون",
     "ثروة",
-    
-    # كلمات إنجليزية
     "scam",
     "spam",
     "hack",
@@ -80,8 +77,6 @@ FORBIDDEN_WORDS = [
     "free money",
     "investment",
     "guaranteed profit",
-    
-    # كلمات خاصة بمجتمع Pi (يمكنك تعديلها)
     "بيع باي",
     "شراء باي",
     "سعر باي",
@@ -99,7 +94,7 @@ MIN_ACCOUNT_AGE_DAYS = 1
 # ===================== القائمة البيضاء =====================
 ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
 
-# ===================== الأنماط (Regex) المُحسّنة =====================
+# ===================== الأنماط (Regex) =====================
 LINK_PATTERN = re.compile(
     r"(https?://|www\.|t\.me/|telegram\.me/|[a-zA-Z0-9-]+\.(com|net|org|io|app|xyz|me|co))",
     re.IGNORECASE
@@ -289,10 +284,6 @@ def clean_obfuscated_text(text: str) -> str:
 
 
 def contains_forbidden_word(text: str) -> tuple:
-    """
-    التحقق من وجود كلمة ممنوعة في النص
-    تعيد (True, الكلمة_التي_تم_العثور_عليها) أو (False, None)
-    """
     text_lower = text.lower()
     for word in FORBIDDEN_WORDS:
         if word.lower() in text_lower:
@@ -320,6 +311,7 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "🔇 كتم 10 دقائق": "🔇",
         "🛑 حساب جديد (ممنوع)": "🛑",
         "🚫 كلمة ممنوعة": "🚫",
+        "🧹 تنظيف": "🧹",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -670,6 +662,100 @@ async def toggle_lock_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"↩️ منع التوجيه: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
+# ===================== 🧹 أمر التنظيف (جديد) =====================
+
+async def clean(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    حذف عدد محدد من الرسائل (للمشرفين)
+    الاستخدام: /clean [عدد]
+    """
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    # التحقق من صلاحيات المشرف
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+        return
+
+    # قراءة العدد من الأمر
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ استخدم: /clean [عدد]\nمثال: /clean 10")
+        return
+
+    try:
+        count = int(args[0])
+        if count < 1:
+            await update.message.reply_text("⚠️ يجب أن يكون العدد أكبر من 0.")
+            return
+        if count > 100:
+            await update.message.reply_text("⚠️ لا يمكن حذف أكثر من 100 رسالة في المرة الواحدة.")
+            return
+    except ValueError:
+        await update.message.reply_text("⚠️ يجب إدخال عدد صحيح.\nمثال: /clean 10")
+        return
+
+    # حذف رسالة الأمر نفسها أولاً
+    try:
+        await update.message.delete()
+    except:
+        pass
+
+    try:
+        # استخدام delete_messages للحذف المتعدد (متوفر في الإصدارات الحديثة)
+        # نأخذ آخر count رسالة من الدردشة
+        message_ids = []
+        async for msg in context.bot.get_chat_history(chat_id, limit=count):
+            message_ids.append(msg.message_id)
+
+        if message_ids:
+            await context.bot.delete_messages(chat_id=chat_id, message_ids=message_ids)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🧹 تم حذف {len(message_ids)} رسالة بواسطة {update.effective_user.first_name}."
+            )
+            await send_log(
+                bot=context.bot,
+                user=update.effective_user,
+                chat_title=update.effective_chat.title or "المجموعة",
+                deleted_text=f"تم حذف {len(message_ids)} رسالة",
+                violation_type="🧹 تنظيف"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ لا توجد رسائل لحذفها."
+            )
+    except Exception as e:
+        print(f"❌ فشل التنظيف: {e}")
+        # في حال فشل الحذف المتعدد، نحاول حذف الرسائل واحدة واحدة
+        try:
+            deleted_count = 0
+            async for msg in context.bot.get_chat_history(chat_id, limit=count):
+                try:
+                    await msg.delete()
+                    deleted_count += 1
+                    await asyncio.sleep(0.2)  # تجنب تجاوز حد السرعة
+                except:
+                    pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🧹 تم حذف {deleted_count} رسالة بواسطة {update.effective_user.first_name}."
+            )
+            await send_log(
+                bot=context.bot,
+                user=update.effective_user,
+                chat_title=update.effective_chat.title or "المجموعة",
+                deleted_text=f"تم حذف {deleted_count} رسالة (طريقة بديلة)",
+                violation_type="🧹 تنظيف"
+            )
+        except Exception as e2:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ فشل تنظيف الرسائل: {e2}\nتأكد من أن البوت لديه صلاحية حذف الرسائل."
+            )
+
+
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -692,7 +778,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/locklinks - تبديل\n"
         "/lockmedia - تبديل\n"
         "/lockforward - تبديل\n"
-        "/stats - عرض الإحصائيات\n\n"
+        "/stats - عرض الإحصائيات\n"
+        "/clean [عدد] - حذف عدد محدد من الرسائل 🧹\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/rules - عرض قوانين المجموعة\n"
@@ -756,7 +843,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode="HTML")
 
 
-# ===================== المعالج الرئيسي (مع الكلمات الممنوعة) =====================
+# ===================== المعالج الرئيسي =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -854,10 +941,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=f"🚫 كلمة ممنوعة: '{found_word}'"
         )
 
-        # تسجيل المخالفة في قاعدة البيانات
         log_violation(user_id, chat_id, "كلمة ممنوعة", original_text)
 
-        # زيادة المخالفات
         count = increment_warning(user_id, user.first_name)
 
         if count == 1:
@@ -902,7 +987,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         return
 
-    # 8. فحص الروابط والأرقام والمحافظ (كما هي)
+    # 8. فحص الروابط والأرقام والمحافظ
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
     wallet_cleaned = re.sub(r'\s', '', original_text)
     link_cleaned = clean_obfuscated_text(original_text)
@@ -1013,6 +1098,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
+    # أوامر المشرفين
     app.add_handler(CommandHandler("ban", ban_user))
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("resetwarnings", reset_warnings))
@@ -1020,19 +1106,23 @@ def main():
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("clean", clean))  # ✅ أمر التنظيف الجديد
 
+    # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
     app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("testlog", test_log))
 
+    # معالجات الأحداث
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_member))
     app.add_handler(CallbackQueryHandler(handle_rules_approval, pattern="^agree_rules_"))
 
+    # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة...")
+    print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات بما فيها /clean...")
     app.run_polling()
 
 
