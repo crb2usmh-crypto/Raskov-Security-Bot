@@ -39,18 +39,19 @@ else:
     supabase = None
     print("⚠️ Supabase غير مضبوط، سيتم استخدام الذاكرة المؤقتة")
 
-# ===================== القوانين =====================
+# ===================== القوانين المحسّنة =====================
 GROUP_RULES = (
     "📜 <b>قوانين المجموعة</b> 📜\n\n"
-    "1️⃣ ممنوع نشر الروابط (ما عدا minepi.com و pi.app).\n"
-    "2️⃣ ممنوع نشر أرقام الهواتف أو المحافظ الرقمية.\n"
-    "3️⃣ ممنوع التكرار السريع للرسائل (سبام).\n"
-    "4️⃣ ممنوع نشر الصور أو الفيديوهات غير المفيدة.\n"
-    "5️⃣ ممنوع استخدام الكلمات الممنوعة (نصب، احتيال، سبام).\n"
-    "6️⃣ احترام جميع الأعضاء.\n\n"
-    "⚠️ المخالفة الأولى: تحذير.\n"
-    "⚠️ المخالفة الثانية: كتم 10 دقائق.\n"
-    "⚠️ المخالفة الثالثة: حظر تلقائي.\n"
+    "1️⃣ <b>الروابط</b>: ممنوع نشر الروابط نهائياً، ما عدا (minepi.com, pi.app).\n"
+    "2️⃣ <b>الأرقام والمحافظ</b>: ممنوع نشر أرقام الهواتف أو المحافظ الرقمية.\n"
+    "3️⃣ <b>التكرار</b>: ممنوع إرسال أكثر من 5 رسائل في 4 ثوانٍ (سبام).\n"
+    "4️⃣ <b>الميديا</b>: ممنوع نشر الصور أو الفيديوهات غير المفيدة.\n"
+    "5️⃣ <b>الكلمات الممنوعة</b>: ممنوع استخدام كلمات النصب والاحتيال والسبام.\n"
+    "6️⃣ <b>الاحترام</b>: احترام جميع الأعضاء والابتعاد عن الشتائم.\n\n"
+    "⚠️ <b>نظام العقوبات</b>:\n"
+    "• <b>المخالفة الأولى</b>: تحذير 📢\n"
+    "• <b>المخالفة الثانية</b>: كتم لمدة 10 دقائق 🔇\n"
+    "• <b>المخالفة الثالثة</b>: حظر تلقائي 🚫\n\n"
     "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
 )
 
@@ -319,7 +320,7 @@ async def check_flood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
             )
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🔇 {update.effective_user.first_name} تم كتمه {MUTE_DURATION} دقائق للتكرار السريع."
+                text=f"🔇 <b>{update.effective_user.first_name}</b> تم كتمك لمدة {MUTE_DURATION} دقائق بسبب التكرار السريع للرسائل. يرجى التوقف عن السبام."
             )
         try:
             await update.message.delete()
@@ -352,18 +353,24 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [[InlineKeyboardButton("✅ أوافق على القوانين", callback_data=f"agree_rules_{user.id}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        welcome_text = (
+            f"👋 مرحباً <b>{user.first_name}</b>!\n\n"
+            f"📌 <b>مجتمع Pi Network</b> يرحب بك. يرجى قراءة القوانين والموافقة عليها للانضمام.\n\n"
+            f"{GROUP_RULES}"
+        )
+
         try:
             await context.bot.send_message(
                 chat_id=user.id,
-                text=GROUP_RULES,
+                text=welcome_text,
                 parse_mode="HTML",
                 reply_markup=reply_markup
             )
-            await update.message.reply_text(f"👋 مرحباً {user.first_name}! تم إرسال القوانين إلى خاصك.")
+            await update.message.reply_text(f"👋 مرحباً {user.first_name}! تم إرسال القوانين إلى خاصك. يرجى الموافقة عليها.")
         except:
             msg = await context.bot.send_message(
                 chat_id=chat.id,
-                text=f"👋 مرحباً {user.first_name}!\n\n{GROUP_RULES}",
+                text=welcome_text,
                 parse_mode="HTML",
                 reply_markup=reply_markup
             )
@@ -401,7 +408,7 @@ async def kick_non_agreed(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⛔ {username} تم طرده لعدم الموافقة على القوانين."
+                text=f"⛔ {username} تم طرده لعدم الموافقة على القوانين خلال المهلة المحددة."
             )
             await send_log(
                 bot=context.bot,
@@ -434,14 +441,15 @@ async def handle_rules_approval(update: Update, context: ContextTypes.DEFAULT_TY
         del pending_approvals[user_id]
 
         await query.edit_message_text(
-            text=f"✅ {user.first_name}، تم تأكيد موافقتك!\nأهلاً وسهلاً بك 🎉",
+            text=f"✅ {user.first_name}، تم تأكيد موافقتك على القوانين!\nأهلاً وسهلاً بك في المجموعة 🎉",
             parse_mode="HTML"
         )
 
         chat_id = update.effective_chat.id
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🎉 أهلاً وسهلاً بك {user.first_name} في المجموعة!"
+            text=f"🎉 أهلاً وسهلاً بك <b>{user.first_name}</b> في المجموعة! استمتع بوقتك ونتمنى لك تجربة مفيدة 🤍",
+            parse_mode="HTML"
         )
         try:
             await context.bot.unpin_chat_message(chat_id=chat_id)
@@ -452,26 +460,44 @@ async def handle_rules_approval(update: Update, context: ContextTypes.DEFAULT_TY
             bot=context.bot,
             user=user,
             chat_title=update.effective_chat.title or "المجموعة",
-            deleted_text="وافق العضو على القوانين",
+            deleted_text="وافق العضو على القوانين وانضم بنجاح.",
             violation_type="👋 ترحيب (موافقة)"
         )
     else:
         await query.edit_message_text("ℹ️ انتهت المهلة أو تمت الموافقة مسبقاً.")
 
 
+# ===================== رسالة الوداع (محسّنة ومؤكدة) =====================
+
 async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """رسالة وداع عند مغادرة عضو - تم إصلاحها"""
+    # التأكد من وجود عضو غادر
+    if not update.message.left_chat_member:
+        return
+
     chat = update.effective_chat
     chat_title = chat.title or "المجموعة"
     user = update.message.left_chat_member
 
+    # تجاهل مغادرة البوت نفسه
     if user.id == context.bot.id:
         return
 
-    await context.bot.send_message(
-        chat_id=chat.id,
-        text=f"🚪 وداعاً {user.first_name}، نتمنى لك التوفيق! 🤍"
+    # رسالة وداع محسّنة
+    goodbye_text = (
+        f"🚪 <b>وداعاً {user.first_name}</b>\n\n"
+        f"📌 نتمنى لك التوفيق في رحلتك مع Pi Network.\n"
+        f"🌟 أبوابنا مفتوحة لك دائماً إذا أردت العودة.\n"
+        f"🤍 شكراً لك على وقتك معنا."
     )
 
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=goodbye_text,
+        parse_mode="HTML"
+    )
+
+    # تنظيف من قائمة الانتظار إذا كان موجوداً
     if user.id in pending_approvals:
         job = pending_approvals[user.id]
         job.schedule_removal()
@@ -493,10 +519,10 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
     if not update.message.reply_to_message:
-        await update.message.reply_text("⚠️ ارد على رسالة العضو.")
+        await update.message.reply_text("⚠️ ارد على رسالة العضو المستهدف.")
         return
 
     target = update.message.reply_to_message.from_user
@@ -528,7 +554,7 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ استخدم: /unban [المعرف]")
+        await update.message.reply_text("⚠️ استخدم: /unban [معرف المستخدم]")
         return
 
     try:
@@ -610,15 +636,14 @@ async def toggle_lock_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"↩️ منع التوجيه: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
-# ===================== الأوامر اليدوية (جديدة) =====================
+# ===================== الأوامر اليدوية (محسّنة) =====================
 
 async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تحذير يدوي (يزيد المخالفات)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
     if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
     if not update.message.reply_to_message:
@@ -634,7 +659,11 @@ async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     count = increment_warning(target_id, target.first_name)
 
-    await update.message.reply_text(f"⚠️ تم تحذير {target.first_name} (المخالفة {count}).")
+    await update.message.reply_text(
+        f"⚠️ تم تحذير <b>{target.first_name}</b> (المخالفة {count}/3).\n"
+        f"📌 المخالفة الثالثة تؤدي إلى حظر تلقائي.",
+        parse_mode="HTML"
+    )
 
     await send_log(
         bot=context.bot,
@@ -646,12 +675,11 @@ async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def mute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """كتم يدوي لمدة محددة (بالدقائق)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
     if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
     if not update.message.reply_to_message:
@@ -666,7 +694,7 @@ async def mute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     args = context.args
-    duration = 5  # افتراضي 5 دقائق
+    duration = 5
     if args:
         try:
             duration = int(args[0])
@@ -679,7 +707,11 @@ async def mute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success = await mute_user(context.bot, chat_id, target_id, duration)
     if success:
-        await update.message.reply_text(f"🔇 تم كتم {target.first_name} لمدة {duration} دقائق.")
+        await update.message.reply_text(
+            f"🔇 تم كتم <b>{target.first_name}</b> لمدة {duration} دقائق.\n"
+            f"📌 يمكن فك الكتم باستخدام /unmute.",
+            parse_mode="HTML"
+        )
         await send_log(
             bot=context.bot,
             user=update.effective_user,
@@ -692,12 +724,11 @@ async def mute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def unmute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """فك الكتم اليدوي"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
     if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
     if not update.message.reply_to_message:
@@ -709,7 +740,7 @@ async def unmute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success = await unmute_user(context.bot, chat_id, target_id)
     if success:
-        await update.message.reply_text(f"✅ تم فك الكتم عن {target.first_name}.")
+        await update.message.reply_text(f"✅ تم فك الكتم عن <b>{target.first_name}</b>.", parse_mode="HTML")
         await send_log(
             bot=context.bot,
             user=update.effective_user,
@@ -722,12 +753,11 @@ async def unmute_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """طرد عضو (بدون حظر دائم)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
     if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
         return
 
     if not update.message.reply_to_message:
@@ -743,8 +773,8 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await context.bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
-        await context.bot.unban_chat_member(chat_id=chat_id, user_id=target_id)  # فك الحظر فوراً (طرد فقط)
-        await update.message.reply_text(f"👢 تم طرد {target.first_name}.")
+        await context.bot.unban_chat_member(chat_id=chat_id, user_id=target_id)
+        await update.message.reply_text(f"👢 تم طرد <b>{target.first_name}</b> من المجموعة.", parse_mode="HTML")
         await send_log(
             bot=context.bot,
             user=update.effective_user,
@@ -759,7 +789,6 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ زر فتح التطبيق المصغر (يظهر في لوحة المفاتيح السفلية)
     web_app_button = KeyboardButton(
         text="📊 فتح لوحة Pi",
         web_app=WebAppInfo(url="https://crb2usmh-crypto.github.io/Pi-Dashboard/")
@@ -779,12 +808,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
         "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
-        "/ban - رد على رسالة العضو\n"
-        "/unban [ID]\n"
-        "/resetwarnings - رد على رسالة العضو\n"
-        "/locklinks - تبديل\n"
-        "/lockmedia - تبديل\n"
-        "/lockforward - تبديل\n"
+        "/ban - حظر عضو (بالرد)\n"
+        "/unban [ID] - فك حظر عضو\n"
+        "/resetwarnings - إعادة تعيين مخالفات (بالرد)\n"
+        "/locklinks - تشغيل/إيقاف منع الروابط\n"
+        "/lockmedia - تشغيل/إيقاف منع الميديا\n"
+        "/lockforward - تشغيل/إيقاف منع التوجيه\n"
         "/stats - عرض إحصائيات البوت 📊\n"
         "/warn - تحذير يدوي (بالرد)\n"
         "/mute [دقائق] - كتم يدوي (بالرد)\n"
@@ -808,7 +837,12 @@ async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     count = get_warnings(user_id)
-    await update.message.reply_text(f"⚠️ عدد مخالفاتك: {count}/3")
+    await update.message.reply_text(
+        f"⚠️ <b>عدد مخالفاتك: {count}/3</b>\n\n"
+        f"📌 المخالفة الثالثة تؤدي إلى حظر تلقائي.\n"
+        f"📖 راجع القوانين عبر /rules لتجنب العقوبات.",
+        parse_mode="HTML"
+    )
 
 
 async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -822,7 +856,7 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ فشل الإرسال: {e}")
 
 
-# ===================== أمر الإحصائيات =====================
+# ===================== أمر الإحصائيات (محسّن) =====================
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -864,7 +898,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode="HTML")
 
 
-# ===================== التقارير الدورية =====================
+# ===================== التقارير الدورية (محسّنة) =====================
 
 async def send_weekly_report(bot):
     if not REPORT_CHANNEL_ID:
@@ -921,7 +955,7 @@ async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_weekly_report(context.bot)
 
 
-# ===================== المعالج الرئيسي =====================
+# ===================== المعالج الرئيسي (مع رسائل محسّنة) =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -938,7 +972,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.delete()
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ {user.first_name}، وافق على القوانين أولاً."
+                text=f"⚠️ <b>{user.first_name}</b>، أنت في مرحلة الموافقة على القوانين. يرجى الضغط على زر 'موافق' في الرسالة المرسلة إليك.",
+                parse_mode="HTML"
             )
         except:
             pass
@@ -973,7 +1008,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⚠️ {user.first_name} ممنوع نشر الصور والفيديوهات."
+            text=f"⚠️ <b>{user.first_name}</b>، ممنوع نشر الصور والفيديوهات في هذه المجموعة.",
+            parse_mode="HTML"
         )
         return
 
@@ -992,7 +1028,8 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⚠️ {user.first_name} ممنوع إعادة توجيه الرسائل."
+            text=f"⚠️ <b>{user.first_name}</b>، ممنوع إعادة توجيه الرسائل في هذه المجموعة.",
+            parse_mode="HTML"
         )
         return
 
@@ -1023,14 +1060,16 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count == 1:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع استخدام الكلمات الممنوعة ('{found_word}')."
+                text=f"⚠️ <b>{user.first_name}</b> تحذير 1/3 - ممنوع استخدام الكلمات الممنوعة ('{found_word}').\n📖 راجع القوانين عبر /rules.",
+                parse_mode="HTML"
             )
         elif count == 2:
             mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND)
             if mute_success:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/3 - تم كتمك لمدة {MUTE_DURATION_SECOND} دقائق لاستخدام كلمات ممنوعة."
+                    text=f"⚠️ <b>{user.first_name}</b> تحذير 2/3 - تم كتمك لمدة {MUTE_DURATION_SECOND} دقائق لاستخدام كلمات ممنوعة.\n📖 المخالفة الثالثة تؤدي إلى حظر تلقائي.",
+                    parse_mode="HTML"
                 )
                 await send_log(
                     bot=context.bot,
@@ -1042,14 +1081,16 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم)"
+                    text=f"⚠️ <b>{user.first_name}</b> تحذير 2/3 - التحذير الأخير. (فشل الكتم، تأكد من صلاحيات البوت)",
+                    parse_mode="HTML"
                 )
         elif count >= 3:
             try:
                 await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"🚫 تم حظر {user.first_name} تلقائياً (3/3)."
+                    text=f"🚫 <b>{user.first_name}</b> تم حظرك تلقائياً (3/3).\n📌 القوانين واضحة، نتمنى لك التوفيق في المستقبل.",
+                    parse_mode="HTML"
                 )
                 reset_warnings_db(user_id)
             except Exception as e:
@@ -1104,14 +1145,16 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count == 1:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع النشر المخالف."
+                text=f"⚠️ <b>{user.first_name}</b> تحذير 1/3 - ممنوع نشر المحتوى المخالف.\n📖 راجع القوانين عبر /rules.",
+                parse_mode="HTML"
             )
         elif count == 2:
             mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND)
             if mute_success:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/3 - تم كتمك لمدة {MUTE_DURATION_SECOND} دقائق. المخالفة الثالثة = حظر."
+                    text=f"⚠️ <b>{user.first_name}</b> تحذير 2/3 - تم كتمك لمدة {MUTE_DURATION_SECOND} دقائق.\n📌 المخالفة الثالثة تؤدي إلى حظر تلقائي.",
+                    parse_mode="HTML"
                 )
                 await send_log(
                     bot=context.bot,
@@ -1123,14 +1166,16 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم)"
+                    text=f"⚠️ <b>{user.first_name}</b> تحذير 2/3 - التحذير الأخير. (فشل الكتم، تأكد من صلاحيات البوت)",
+                    parse_mode="HTML"
                 )
         elif count >= 3:
             try:
                 await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"🚫 تم حظر {user.first_name} تلقائياً (3/3)."
+                    text=f"🚫 <b>{user.first_name}</b> تم حظرك تلقائياً (3/3).\n📌 القوانين واضحة، نتمنى لك التوفيق في المستقبل.",
+                    parse_mode="HTML"
                 )
                 reset_warnings_db(user_id)
             except Exception as e:
@@ -1157,7 +1202,7 @@ def main():
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
 
-    # أوامر يدوية جديدة
+    # أوامر يدوية
     app.add_handler(CommandHandler("warn", warn_user))
     app.add_handler(CommandHandler("mute", mute_manual))
     app.add_handler(CommandHandler("unmute", unmute_manual))
@@ -1177,7 +1222,7 @@ def main():
     # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    # ===================== جدولة التقارير الأسبوعية =====================
+    # جدولة التقارير الأسبوعية
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         weekly_report_job,
@@ -1187,7 +1232,7 @@ def main():
     scheduler.start()
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
 
-    print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات...")
+    print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات والرسائل المحسّنة...")
     app.run_polling()
 
 
