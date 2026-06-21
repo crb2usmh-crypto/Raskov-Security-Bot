@@ -112,7 +112,7 @@ GOODBYE_MESSAGE = (
 # ===================== إعدادات البيئة =====================
 TOKEN = os.getenv("BOT_TOKEN")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
-REPORT_CHANNEL_ID = os.getenv("REPORT_CHANNEL_ID")  # ✅ جديد: قناة التقارير
+REPORT_CHANNEL_ID = os.getenv("REPORT_CHANNEL_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -276,7 +276,7 @@ def update_group_setting(chat_id: int, setting_name: str, value):
         print(f"⚠️ خطأ في تحديث الإعدادات: {e}")
 
 
-# ===================== دوال الإحصائيات (العامة) =====================
+# ===================== دوال الإحصائيات =====================
 
 def get_total_violations(chat_id: int) -> int:
     if not supabase:
@@ -323,7 +323,67 @@ def get_users_with_warnings() -> int:
         return 0
 
 
-# ===================== دوال إحصائيات التقارير الدورية (جديدة) =====================
+# ===================== دوال إدارة مستويات المشرفين (جديد) =====================
+
+def get_admin_level(chat_id: int, user_id: int) -> int:
+    """جلب مستوى المشرف (0 = عضو عادي، 1-3 = مشرف)"""
+    if not supabase:
+        return 0
+    try:
+        res = supabase.table("admin_levels").select("level").eq("chat_id", chat_id).eq("user_id", user_id).execute()
+        if res.data:
+            return res.data[0].get("level", 0)
+        return 0
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب مستوى المشرف: {e}")
+        return 0
+
+
+def set_admin_level(chat_id: int, user_id: int, level: int) -> bool:
+    """تعيين مستوى مشرف (1-3)"""
+    if not supabase:
+        return False
+    try:
+        res = supabase.table("admin_levels").select("*").eq("chat_id", chat_id).eq("user_id", user_id).execute()
+        if res.data:
+            supabase.table("admin_levels").update({"level": level}).eq("chat_id", chat_id).eq("user_id", user_id).execute()
+        else:
+            supabase.table("admin_levels").insert({
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "level": level
+            }).execute()
+        return True
+    except Exception as e:
+        print(f"⚠️ خطأ في تعيين مستوى المشرف: {e}")
+        return False
+
+
+def remove_admin(chat_id: int, user_id: int) -> bool:
+    """إزالة صلاحيات المشرف"""
+    if not supabase:
+        return False
+    try:
+        supabase.table("admin_levels").delete().eq("chat_id", chat_id).eq("user_id", user_id).execute()
+        return True
+    except Exception as e:
+        print(f"⚠️ خطأ في إزالة المشرف: {e}")
+        return False
+
+
+def get_admins_list(chat_id: int) -> list:
+    """جلب قائمة المشرفين ومستوياتهم"""
+    if not supabase:
+        return []
+    try:
+        res = supabase.table("admin_levels").select("user_id, level").eq("chat_id", chat_id).execute()
+        return res.data if res.data else []
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب قائمة المشرفين: {e}")
+        return []
+
+
+# ===================== دوال إحصائيات التقارير الدورية =====================
 
 def get_weekly_stats(chat_id: int) -> dict:
     """جلب إحصائيات الأسبوع الماضي (آخر 7 أيام)"""
@@ -331,26 +391,21 @@ def get_weekly_stats(chat_id: int) -> dict:
         return {}
 
     try:
-        # تاريخ الأسبوع الماضي
         one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
 
-        # إجمالي المخالفات في الأسبوع الماضي
         res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).gte("created_at", one_week_ago).execute()
         total_violations = res.count if res.count else 0
 
-        # المخالفات حسب النوع
         violations_by_type = {}
         for vtype in ["رابط غير مسموح", "رابط غير مسموح (ملتف)", "رقم هاتف", "محفظة رقمية", "كلمة ممنوعة"]:
             res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", vtype).gte("created_at", one_week_ago).execute()
             violations_by_type[vtype] = res.count if res.count else 0
 
-        # التحذيرات الصادرة في الأسبوع الماضي (من جدول violations_log أيضاً، لأننا نسجلها هناك)
         res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "⚠️ إدارة (تحذير)").gte("created_at", one_week_ago).execute()
         total_warnings = res.count if res.count else 0
 
-        # العضو الأكثر مخالفة في الأسبوع الماضي
-        res = supabase.table("violations_log").select("user_id", "violations_log:user_id(users:first_name)").eq("chat_id", chat_id).gte("created_at", one_week_ago).execute()
-        # تبسيط: نحسب التكرارات يدوياً
+        # أكثر عضو مخالفة
+        res = supabase.table("violations_log").select("user_id").eq("chat_id", chat_id).gte("created_at", one_week_ago).execute()
         user_violations = {}
         if res.data:
             for item in res.data:
@@ -363,18 +418,15 @@ def get_weekly_stats(chat_id: int) -> dict:
         for uid, count in user_violations.items():
             if count > top_violator_count:
                 top_violator_count = count
-                # نحاول جلب اسم المستخدم
                 user_res = supabase.table("warnings").select("first_name").eq("user_id", uid).execute()
                 if user_res.data:
                     top_violator = user_res.data[0].get("first_name", f"ID:{uid}")
                 else:
                     top_violator = f"ID:{uid}"
 
-        # عدد المحظورين في الأسبوع الماضي (من نوع "حظر" في logs)
         res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "🚫 حظر").gte("created_at", one_week_ago).execute()
         total_bans = res.count if res.count else 0
 
-        # عدد الكتم في الأسبوع الماضي (من نوع "كتم" في logs)
         res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", "🔇 كتم").gte("created_at", one_week_ago).execute()
         total_mutes = res.count if res.count else 0
 
@@ -397,12 +449,52 @@ def get_weekly_stats(chat_id: int) -> dict:
 
 # ===================== دوال المساعدة الأساسية =====================
 
-async def is_admin(bot, chat_id, user_id):
+async def is_admin(bot, chat_id, user_id) -> bool:
+    """التحقق من أن المستخدم مشرف (مستوى 1-3) أو مشرف تليجرام"""
     try:
         member = await bot.get_chat_member(chat_id, user_id)
-        return member.status in ["administrator", "creator"]
+        if member.status in ["administrator", "creator"]:
+            return True
     except:
-        return False
+        pass
+    
+    level = get_admin_level(chat_id, user_id)
+    return level >= 1
+
+
+async def is_level_or_higher(bot, chat_id, user_id, required_level: int) -> bool:
+    """التحقق من أن المستخدم لديه مستوى معين أو أعلى"""
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        if member.status in ["creator"]:
+            return True
+        if member.status in ["administrator"]:
+            return True
+    except:
+        pass
+    
+    level = get_admin_level(chat_id, user_id)
+    return level >= required_level
+
+
+async def can_manage_admin(bot, chat_id, user_id, target_id) -> tuple:
+    """التحقق من إمكانية إدارة مشرف آخر. تعيد (True, '') أو (False, 'سبب')"""
+    try:
+        target_member = await bot.get_chat_member(chat_id, target_id)
+        if target_member.status in ["creator"]:
+            return False, "❌ لا يمكن تعديل مالك المجموعة."
+        if target_member.status in ["administrator"]:
+            return False, "❌ لا يمكن تعديل مشرفي تليجرام."
+    except:
+        pass
+    
+    user_level = get_admin_level(chat_id, user_id)
+    target_level = get_admin_level(chat_id, target_id)
+    
+    if target_level >= user_level:
+        return False, "❌ لا يمكنك تعديل مشرف بمستوى أعلى أو مساوٍ لمستواك."
+    
+    return True, ""
 
 
 def clean_obfuscated_text(text: str) -> str:
@@ -950,98 +1042,24 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===================== التقارير الدورية (جديد) =====================
-
-async def send_weekly_report(bot, chat_id: int):
-    """إنشاء وإرسال التقرير الأسبوعي"""
-    if not supabase:
-        return
-
-    stats = get_weekly_stats(chat_id)
-    if not stats:
-        return
-
-    # تنسيق التقرير
-    report_text = (
-        "📊 <b>تقرير الأسبوعي للمجموعة</b>\n"
-        f"📅 <b>الفترة</b>: آخر 7 أيام\n\n"
-        f"🛡️ <b>إجمالي المخالفات</b>: {stats.get('total_violations', 0)}\n"
-        f"🚫 <b>الروابط المحذوفة</b>: {stats.get('links_deleted', 0)}\n"
-        f"📞 <b>الأرقام المحذوفة</b>: {stats.get('phones_deleted', 0)}\n"
-        f"💰 <b>المحافظ المحذوفة</b>: {stats.get('wallets_deleted', 0)}\n"
-        f"🚫 <b>الكلمات الممنوعة</b>: {stats.get('forbidden_words', 0)}\n"
-        f"🔇 <b>عمليات الكتم</b>: {stats.get('total_mutes', 0)}\n"
-        f"🚫 <b>عمليات الحظر</b>: {stats.get('total_bans', 0)}\n"
-        f"⚠️ <b>إجمالي التحذيرات</b>: {stats.get('total_warnings', 0)}\n"
-    )
-
-    if stats.get('top_violator'):
-        report_text += (
-            f"\n🏆 <b>أكثر عضو مخالفة</b>:\n"
-            f"👤 {stats.get('top_violator')} - {stats.get('top_violator_count')} مخالفات"
-        )
-    else:
-        report_text += "\n\n🏆 <b>لا توجد مخالفات</b> هذا الأسبوع! 🎉"
-
-    report_text += "\n\n📌 <i>يتم إنشاء هذا التقرير تلقائياً كل أسبوع.</i>"
-
-    try:
-        await bot.send_message(chat_id=REPORT_CHANNEL_ID, text=report_text, parse_mode="HTML")
-        print(f"✅ تم إرسال التقرير الأسبوعي إلى القناة {REPORT_CHANNEL_ID}")
-    except Exception as e:
-        print(f"❌ فشل إرسال التقرير: {e}")
-
-
-async def generate_report_for_all_groups(context: ContextTypes.DEFAULT_TYPE):
-    """جلب جميع المجموعات التي يديرها البوت وإرسال تقرير لكل منها"""
-    if not supabase:
-        return
-
-    try:
-        # جلب جميع chat_id من جدول group_settings (أو violations_log)
-        res = supabase.table("group_settings").select("chat_id").execute()
-        if not res.data:
-            return
-
-        for item in res.data:
-            chat_id = item.get("chat_id")
-            if chat_id:
-                await send_weekly_report(context.bot, chat_id)
-    except Exception as e:
-        print(f"⚠️ خطأ في إنشاء التقارير: {e}")
-
-
-async def force_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر لتشغيل التقرير يدوياً (للمشرفين)"""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
-        return
-
-    await update.message.reply_text("📊 جاري إنشاء التقرير الأسبوعي...")
-    await send_weekly_report(context.bot, chat_id)
-    await update.message.reply_text("✅ تم إرسال التقرير إلى قناة التقارير.")
-
-
-# ===================== أوامر المشرفين =====================
+# ===================== أوامر المشرفين (مع مستويات) =====================
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 2):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين المتقدمين (مستوى 2+).")
         return
+
     if not update.message.reply_to_message:
         await update.message.reply_text("⚠️ ارد على رسالة العضو.")
         return
 
     target = update.message.reply_to_message.from_user
     target_id = target.id
-    if await is_admin(context.bot, chat_id, target_id):
-        await update.message.reply_text("❌ لا يمكنك حظر مشرف.")
+    if await is_level_or_higher(context.bot, chat_id, target_id, 2):
+        await update.message.reply_text("❌ لا يمكنك حظر مشرف آخر.")
         return
 
     try:
@@ -1062,9 +1080,10 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 2):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين المتقدمين (مستوى 2+).")
         return
+
     args = context.args
     if not args:
         await update.message.reply_text("⚠️ استخدم: /unban [المعرف]")
@@ -1089,9 +1108,10 @@ async def reset_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 2):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين المتقدمين (مستوى 2+).")
         return
+
     if not update.message.reply_to_message:
         await update.message.reply_text("⚠️ ارد على رسالة العضو.")
         return
@@ -1113,9 +1133,11 @@ async def reset_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def toggle_lock_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
         return
+
     settings = get_group_settings(chat_id)
     new_value = not settings.get("lock_links", True)
     update_group_setting(chat_id, "lock_links", new_value)
@@ -1125,9 +1147,11 @@ async def toggle_lock_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def toggle_lock_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
         return
+
     settings = get_group_settings(chat_id)
     new_value = not settings.get("lock_media", False)
     update_group_setting(chat_id, "lock_media", new_value)
@@ -1137,9 +1161,11 @@ async def toggle_lock_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def toggle_lock_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ للمشرفين فقط.")
+
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
         return
+
     settings = get_group_settings(chat_id)
     new_value = not settings.get("lock_forward", False)
     update_group_setting(chat_id, "lock_forward", new_value)
@@ -1152,8 +1178,8 @@ async def set_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
         return
 
     args = context.args
@@ -1163,11 +1189,8 @@ async def set_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         count = int(args[0])
-        if count < 1:
-            await update.message.reply_text("⚠️ يجب أن يكون العدد أكبر من 0.")
-            return
-        if count > 10:
-            await update.message.reply_text("⚠️ لا يمكن أن يتجاوز العدد 10.")
+        if count < 1 or count > 10:
+            await update.message.reply_text("⚠️ العدد يجب أن يكون بين 1 و 10.")
             return
 
         update_group_setting(chat_id, "max_warnings", count)
@@ -1187,8 +1210,8 @@ async def set_mute_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
         return
 
     args = context.args
@@ -1198,11 +1221,8 @@ async def set_mute_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         minutes = int(args[0])
-        if minutes < 1:
-            await update.message.reply_text("⚠️ يجب أن تكون المدة أكبر من 0 دقيقة.")
-            return
-        if minutes > 60:
-            await update.message.reply_text("⚠️ لا يمكن أن تتجاوز المدة 60 دقيقة.")
+        if minutes < 1 or minutes > 60:
+            await update.message.reply_text("⚠️ المدة يجب أن تكون بين 1 و 60 دقيقة.")
             return
 
         update_group_setting(chat_id, "mute_duration", minutes)
@@ -1222,8 +1242,8 @@ async def set_captcha_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
         return
 
     args = context.args
@@ -1233,11 +1253,8 @@ async def set_captcha_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         seconds = int(args[0])
-        if seconds < 10:
-            await update.message.reply_text("⚠️ يجب أن تكون المهلة 10 ثوان على الأقل.")
-            return
-        if seconds > 300:
-            await update.message.reply_text("⚠️ لا يمكن أن تتجاوز المهلة 300 ثانية (5 دقائق).")
+        if seconds < 10 or seconds > 300:
+            await update.message.reply_text("⚠️ المهلة يجب أن تكون بين 10 و 300 ثانية.")
             return
 
         update_group_setting(chat_id, "captcha_timeout", seconds)
@@ -1253,6 +1270,247 @@ async def set_captcha_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ يجب إدخال عدد صحيح.\nمثال: /setcaptchatime 90")
 
 
+# ===================== أوامر إدارة المشرفين =====================
+
+async def set_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "⚠️ استخدم: /setadmin [@username] [المستوى]\n"
+            "المستويات:\n"
+            "1 - مشرف مبتدئ (warn, mute, kick)\n"
+            "2 - مشرف متقدم (ban, unban, resetwarnings)\n"
+            "3 - مدير (جميع الصلاحيات)"
+        )
+        return
+
+    username = args[0].replace("@", "")
+    try:
+        level = int(args[1])
+        if level < 1 or level > 3:
+            await update.message.reply_text("⚠️ المستوى يجب أن يكون بين 1 و 3.")
+            return
+    except ValueError:
+        await update.message.reply_text("⚠️ يجب إدخال مستوى صحيح (1-3).")
+        return
+
+    try:
+        target_user = await context.bot.get_chat_member(chat_id, username)
+        target_id = target_user.user.id
+        target_name = target_user.user.first_name
+    except:
+        try:
+            async for member in context.bot.get_chat_administrators(chat_id):
+                if member.user.username and member.user.username.lower() == username.lower():
+                    target_id = member.user.id
+                    target_name = member.user.first_name
+                    break
+            else:
+                await update.message.reply_text(f"❌ لم يتم العثور على المستخدم @{username} في المجموعة.")
+                return
+        except:
+            await update.message.reply_text(f"❌ لم يتم العثور على المستخدم @{username}.")
+            return
+
+    if target_id == user_id:
+        await update.message.reply_text("❌ لا يمكنك تعديل صلاحياتك بنفسك.")
+        return
+
+    can_manage, error_msg = await can_manage_admin(context.bot, chat_id, user_id, target_id)
+    if not can_manage:
+        await update.message.reply_text(error_msg)
+        return
+
+    success = set_admin_level(chat_id, target_id, level)
+    if success:
+        level_names = {1: "مشرف مبتدئ", 2: "مشرف متقدم", 3: "مدير (Super Admin)"}
+        await update.message.reply_text(
+            f"✅ تم تعيين {target_name} كـ {level_names.get(level, 'مشرف')} بنجاح."
+        )
+        await send_log(
+            bot=context.bot,
+            user=update.effective_user,
+            chat_title=update.effective_chat.title or "المجموعة",
+            deleted_text=f"تعيين {target_name} (ID: {target_id}) بمستوى {level}",
+            violation_type="⚙️ إدارة (تعيين مشرف)"
+        )
+    else:
+        await update.message.reply_text("❌ فشل تعيين المشرف. تأكد من اتصال قاعدة البيانات.")
+
+
+async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 3):
+        await update.message.reply_text("❌ هذا الأمر للمديرين فقط (مستوى 3).")
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ استخدم: /removeadmin [@username]")
+        return
+
+    username = args[0].replace("@", "")
+
+    try:
+        target_user = await context.bot.get_chat_member(chat_id, username)
+        target_id = target_user.user.id
+        target_name = target_user.user.first_name
+    except:
+        try:
+            async for member in context.bot.get_chat_administrators(chat_id):
+                if member.user.username and member.user.username.lower() == username.lower():
+                    target_id = member.user.id
+                    target_name = member.user.first_name
+                    break
+            else:
+                await update.message.reply_text(f"❌ لم يتم العثور على المستخدم @{username}.")
+                return
+        except:
+            await update.message.reply_text(f"❌ لم يتم العثور على المستخدم @{username}.")
+            return
+
+    if target_id == user_id:
+        await update.message.reply_text("❌ لا يمكنك إزالة صلاحياتك بنفسك.")
+        return
+
+    can_manage, error_msg = await can_manage_admin(context.bot, chat_id, user_id, target_id)
+    if not can_manage:
+        await update.message.reply_text(error_msg)
+        return
+
+    success = remove_admin(chat_id, target_id)
+    if success:
+        await update.message.reply_text(f"✅ تم إزالة صلاحيات {target_name} بنجاح.")
+        await send_log(
+            bot=context.bot,
+            user=update.effective_user,
+            chat_title=update.effective_chat.title or "المجموعة",
+            deleted_text=f"إزالة صلاحيات {target_name} (ID: {target_id})",
+            violation_type="⚙️ إدارة (إزالة مشرف)"
+        )
+    else:
+        await update.message.reply_text("❌ فشل إزالة الصلاحيات.")
+
+
+async def admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+        return
+
+    admins = get_admins_list(chat_id)
+    if not admins:
+        await update.message.reply_text("ℹ️ لا يوجد مشرفين مسجلين في قاعدة البيانات.")
+        return
+
+    level_names = {1: "مبتدئ", 2: "متقدم", 3: "مدير"}
+    admin_list_text = "👑 <b>قائمة المشرفين</b>\n\n"
+
+    for admin in admins:
+        uid = admin.get("user_id")
+        level = admin.get("level", 0)
+        try:
+            user = await context.bot.get_chat_member(chat_id, uid)
+            name = user.user.first_name
+            username = f"@{user.user.username}" if user.user.username else "لا يوجد"
+        except:
+            name = f"ID:{uid}"
+            username = "غير معروف"
+
+        admin_list_text += (
+            f"👤 <b>{name}</b>\n"
+            f"🆔 {uid}\n"
+            f"📊 المستوى: {level} ({level_names.get(level, 'غير معروف')})\n"
+            f"📌 {username}\n\n"
+        )
+
+    await update.message.reply_text(admin_list_text, parse_mode="HTML")
+
+
+# ===================== التقارير الدورية =====================
+
+async def send_weekly_report(bot, chat_id: int):
+    if not supabase:
+        return
+
+    stats = get_weekly_stats(chat_id)
+    if not stats:
+        return
+
+    report_text = (
+        "📊 <b>التقرير الأسبوعي للمجموعة</b>\n"
+        f"📅 <b>الفترة</b>: آخر 7 أيام\n\n"
+        f"🛡️ <b>إجمالي المخالفات</b>: {stats.get('total_violations', 0)}\n"
+        f"🚫 <b>الروابط المحذوفة</b>: {stats.get('links_deleted', 0)}\n"
+        f"📞 <b>الأرقام المحذوفة</b>: {stats.get('phones_deleted', 0)}\n"
+        f"💰 <b>المحافظ المحذوفة</b>: {stats.get('wallets_deleted', 0)}\n"
+        f"🚫 <b>الكلمات الممنوعة</b>: {stats.get('forbidden_words', 0)}\n"
+        f"🔇 <b>عمليات الكتم</b>: {stats.get('total_mutes', 0)}\n"
+        f"🚫 <b>عمليات الحظر</b>: {stats.get('total_bans', 0)}\n"
+        f"⚠️ <b>إجمالي التحذيرات</b>: {stats.get('total_warnings', 0)}\n"
+    )
+
+    if stats.get('top_violator'):
+        report_text += (
+            f"\n🏆 <b>أكثر عضو مخالفة</b>:\n"
+            f"👤 {stats.get('top_violator')} - {stats.get('top_violator_count')} مخالفات"
+        )
+    else:
+        report_text += "\n\n🏆 <b>لا توجد مخالفات</b> هذا الأسبوع! 🎉"
+
+    report_text += "\n\n📌 <i>يتم إنشاء هذا التقرير تلقائياً كل أسبوع.</i>"
+
+    try:
+        if REPORT_CHANNEL_ID:
+            await bot.send_message(chat_id=REPORT_CHANNEL_ID, text=report_text, parse_mode="HTML")
+            print(f"✅ تم إرسال التقرير الأسبوعي إلى القناة {REPORT_CHANNEL_ID}")
+        else:
+            await bot.send_message(chat_id=chat_id, text=report_text, parse_mode="HTML")
+    except Exception as e:
+        print(f"❌ فشل إرسال التقرير: {e}")
+
+
+async def generate_report_for_all_groups(context: ContextTypes.DEFAULT_TYPE):
+    if not supabase:
+        return
+
+    try:
+        res = supabase.table("group_settings").select("chat_id").execute()
+        if not res.data:
+            return
+
+        for item in res.data:
+            chat_id = item.get("chat_id")
+            if chat_id:
+                await send_weekly_report(context.bot, chat_id)
+    except Exception as e:
+        print(f"⚠️ خطأ في إنشاء التقارير: {e}")
+
+
+async def force_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_level_or_higher(context.bot, chat_id, user_id, 2):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين المتقدمين (مستوى 2+).")
+        return
+
+    await update.message.reply_text("📊 جاري إنشاء التقرير الأسبوعي...")
+    await send_weekly_report(context.bot, chat_id)
+    await update.message.reply_text("✅ تم إرسال التقرير إلى قناة التقارير.")
+
+
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1266,19 +1524,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>الترحيب</b>: كابتشا + موافقة 🔐\n"
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
         "🔹 <b>إعدادات قابلة للتخصيص</b>: ✅\n"
-        "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n\n"
+        "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n"
+        "🔹 <b>مستويات المشرفين</b>: مفعلة 👑\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
-        "/ban - رد على رسالة العضو\n"
-        "/unban [ID]\n"
-        "/resetwarnings - رد على رسالة العضو\n"
-        "/locklinks - تبديل\n"
-        "/lockmedia - تبديل\n"
-        "/lockforward - تبديل\n"
-        "/stats - عرض الإحصائيات\n"
-        "/setwarnings [عدد] - عدد التحذيرات قبل الحظر\n"
-        "/setmutetime [دقائق] - مدة الكتم عند المخالفة الثانية\n"
-        "/setcaptchatime [ثواني] - مهلة الكابتشا\n"
-        "/report - تشغيل التقرير يدوياً 📊\n\n"
+        "/ban - رد على رسالة العضو (مستوى 2+)\n"
+        "/unban [ID] (مستوى 2+)\n"
+        "/resetwarnings - رد على رسالة العضو (مستوى 2+)\n"
+        "/locklinks - تبديل (مستوى 3)\n"
+        "/lockmedia - تبديل (مستوى 3)\n"
+        "/lockforward - تبديل (مستوى 3)\n"
+        "/stats - عرض الإحصائيات (مستوى 1+)\n"
+        "/setwarnings [عدد] - عدد التحذيرات (مستوى 3)\n"
+        "/setmutetime [دقائق] - مدة الكتم (مستوى 3)\n"
+        "/setcaptchatime [ثواني] - مهلة الكابتشا (مستوى 3)\n"
+        "/report - تشغيل التقرير يدوياً (مستوى 2+)\n"
+        "/setadmin [@user] [1-3] - تعيين مشرف (مستوى 3)\n"
+        "/removeadmin [@user] - إزالة مشرف (مستوى 3)\n"
+        "/adminlist - قائمة المشرفين (مستوى 1+)\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/rules - عرض قوانين المجموعة\n"
@@ -1623,7 +1885,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
-    # أوامر المشرفين الأساسية
+    # أوامر المشرفين
     app.add_handler(CommandHandler("ban", ban_user))
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("resetwarnings", reset_warnings))
@@ -1631,14 +1893,13 @@ def main():
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
-
-    # أوامر الإعدادات
     app.add_handler(CommandHandler("setwarnings", set_warnings))
     app.add_handler(CommandHandler("setmutetime", set_mute_time))
     app.add_handler(CommandHandler("setcaptchatime", set_captcha_time))
-
-    # أمر التقرير اليدوي (جديد)
     app.add_handler(CommandHandler("report", force_report))
+    app.add_handler(CommandHandler("setadmin", set_admin))
+    app.add_handler(CommandHandler("removeadmin", remove_admin))
+    app.add_handler(CommandHandler("adminlist", admin_list))
 
     # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
@@ -1656,10 +1917,8 @@ def main():
     # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    # ===================== جدولة التقارير الأسبوعية (جديد) =====================
+    # ===================== جدولة التقارير الأسبوعية =====================
     scheduler = AsyncIOScheduler()
-    
-    # جدولة التقرير كل يوم أحد الساعة 12:00 مساءً
     scheduler.add_job(
         generate_report_for_all_groups,
         CronTrigger(day_of_week='sun', hour=12, minute=0),
@@ -1668,7 +1927,7 @@ def main():
     scheduler.start()
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
 
-    print("🤖 Raskov Security Bot يعمل الآن مع التقارير الدورية...")
+    print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات...")
     app.run_polling()
 
 
