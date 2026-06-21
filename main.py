@@ -2,7 +2,6 @@ import os
 import re
 from datetime import datetime, timedelta
 import telegram
-import asyncio
 
 # ===================== استيراد Supabase =====================
 from supabase import create_client, Client
@@ -311,7 +310,6 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "🔇 كتم 10 دقائق": "🔇",
         "🛑 حساب جديد (ممنوع)": "🛑",
         "🚫 كلمة ممنوعة": "🚫",
-        "🧹 تنظيف": "🧹",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -662,100 +660,6 @@ async def toggle_lock_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"↩️ منع التوجيه: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
-# ===================== 🧹 أمر التنظيف (جديد) =====================
-
-async def clean(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    حذف عدد محدد من الرسائل (للمشرفين)
-    الاستخدام: /clean [عدد]
-    """
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    # التحقق من صلاحيات المشرف
-    if not await is_admin(context.bot, chat_id, user_id):
-        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
-        return
-
-    # قراءة العدد من الأمر
-    args = context.args
-    if not args:
-        await update.message.reply_text("⚠️ استخدم: /clean [عدد]\nمثال: /clean 10")
-        return
-
-    try:
-        count = int(args[0])
-        if count < 1:
-            await update.message.reply_text("⚠️ يجب أن يكون العدد أكبر من 0.")
-            return
-        if count > 100:
-            await update.message.reply_text("⚠️ لا يمكن حذف أكثر من 100 رسالة في المرة الواحدة.")
-            return
-    except ValueError:
-        await update.message.reply_text("⚠️ يجب إدخال عدد صحيح.\nمثال: /clean 10")
-        return
-
-    # حذف رسالة الأمر نفسها أولاً
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-    try:
-        # استخدام delete_messages للحذف المتعدد (متوفر في الإصدارات الحديثة)
-        # نأخذ آخر count رسالة من الدردشة
-        message_ids = []
-        async for msg in context.bot.get_chat_history(chat_id, limit=count):
-            message_ids.append(msg.message_id)
-
-        if message_ids:
-            await context.bot.delete_messages(chat_id=chat_id, message_ids=message_ids)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"🧹 تم حذف {len(message_ids)} رسالة بواسطة {update.effective_user.first_name}."
-            )
-            await send_log(
-                bot=context.bot,
-                user=update.effective_user,
-                chat_title=update.effective_chat.title or "المجموعة",
-                deleted_text=f"تم حذف {len(message_ids)} رسالة",
-                violation_type="🧹 تنظيف"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ لا توجد رسائل لحذفها."
-            )
-    except Exception as e:
-        print(f"❌ فشل التنظيف: {e}")
-        # في حال فشل الحذف المتعدد، نحاول حذف الرسائل واحدة واحدة
-        try:
-            deleted_count = 0
-            async for msg in context.bot.get_chat_history(chat_id, limit=count):
-                try:
-                    await msg.delete()
-                    deleted_count += 1
-                    await asyncio.sleep(0.2)  # تجنب تجاوز حد السرعة
-                except:
-                    pass
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"🧹 تم حذف {deleted_count} رسالة بواسطة {update.effective_user.first_name}."
-            )
-            await send_log(
-                bot=context.bot,
-                user=update.effective_user,
-                chat_title=update.effective_chat.title or "المجموعة",
-                deleted_text=f"تم حذف {deleted_count} رسالة (طريقة بديلة)",
-                violation_type="🧹 تنظيف"
-            )
-        except Exception as e2:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"❌ فشل تنظيف الرسائل: {e2}\nتأكد من أن البوت لديه صلاحية حذف الرسائل."
-            )
-
-
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -778,8 +682,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/locklinks - تبديل\n"
         "/lockmedia - تبديل\n"
         "/lockforward - تبديل\n"
-        "/stats - عرض الإحصائيات\n"
-        "/clean [عدد] - حذف عدد محدد من الرسائل 🧹\n\n"
+        "/stats - عرض الإحصائيات\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/rules - عرض قوانين المجموعة\n"
@@ -1106,7 +1009,6 @@ def main():
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("clean", clean))  # ✅ أمر التنظيف الجديد
 
     # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
@@ -1122,7 +1024,7 @@ def main():
     # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات بما فيها /clean...")
+    print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات الأساسية...")
     app.run_polling()
 
 
