@@ -11,7 +11,7 @@ from supabase import create_client, Client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, WebAppInfo, ReplyKeyboardMarkup
+from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -1113,12 +1113,12 @@ async def reset_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ تم إعادة تعيين مخالفات {target.first_name}.")
     await send_log(
-        bot=context.bot,
-        user=update.effective_user,
-        chat_title=update.effective_chat.title or "المجموعة",
-        deleted_text=f"إعادة تعيين مخالفات {target.first_name}",
-        violation_type="🔄 إعادة تعيين مخالفات"
-    )
+            bot=context.bot,
+            user=update.effective_user,
+            chat_title=update.effective_chat.title or "المجموعة",
+            deleted_text=f"إعادة تعيين مخالفات {target.first_name}",
+            violation_type="🔄 إعادة تعيين مخالفات"
+        )
 
 
 async def toggle_lock_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1505,12 +1505,12 @@ async def force_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ زر فتح التطبيق المصغر
-    web_app_button = KeyboardButton(
+    # ✅ زر ويب باستخدام InlineKeyboardButton (أكثر استقراراً)
+    web_app_button = InlineKeyboardButton(
         text="📊 فتح لوحة Pi",
         web_app=WebAppInfo(url="https://crb2usmh-crypto.github.io/Pi-Dashboard/")
     )
-    reply_markup = ReplyKeyboardMarkup([[web_app_button]], resize_keyboard=True)
+    keyboard = InlineKeyboardMarkup([[web_app_button]])
 
     await update.message.reply_text(
         "🛡️ <b>Raskov Security Bot v6.0</b>\n\n"
@@ -1546,7 +1546,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/testlog - اختبار اللوجات\n\n"
         "📊 <b>لوحة Pi Dashboard</b>:\n"
         "اضغط على الزر أدناه لفتح لوحة التحكم.",
-        reply_markup=reply_markup,
+        reply_markup=keyboard,
         parse_mode="HTML"
     )
 
