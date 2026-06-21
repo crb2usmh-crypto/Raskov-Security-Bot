@@ -44,6 +44,7 @@ GROUP_RULES = (
     "5️⃣ احترام جميع الأعضاء.\n\n"
     "⚠️ المخالفة = تحذير، والمخالفة الثالثة = حظر تلقائي.\n"
     "🔇 المخالفة الثانية = كتم 10 دقائق.\n"
+    "🛑 الحسابات الجديدة (أقل من يوم) = حظر فوري عند المخالفة.\n"
     "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
 )
 
@@ -52,7 +53,10 @@ AUTO_KICK_TIMEOUT = 60
 FLOOD_LIMIT = 5
 FLOOD_TIME = 4
 MUTE_DURATION = 5
-MUTE_DURATION_SECOND_WARNING = 10  # ✅ مدة الكتم عند المخالفة الثانية (بالدقائق)
+MUTE_DURATION_SECOND_WARNING = 10  # مدة الكتم عند المخالفة الثانية (بالدقائق)
+
+# ✅ إعدادات حماية الحسابات الجديدة
+MIN_ACCOUNT_AGE_DAYS = 1  # الحد الأدنى لعمر الحساب (بالأيام)
 
 # ===================== القائمة البيضاء =====================
 ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
@@ -63,25 +67,22 @@ LINK_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# ✅ نمط المحفظة: يدعم 0x (إيثيريوم/BSC) و T (TRC20)
 WALLET_PATTERN = re.compile(
     r"\b(0x[a-fA-F0-9]{40}|T[a-zA-Z0-9]{33})\b",
     re.IGNORECASE
 )
 
-# ✅ نمط الرقم: نبحث عن 7-15 رقماً بعد تنظيف النص
 PHONE_PATTERN = re.compile(r"\+?\d{7,15}")
 
 # ===================== التخزين المؤقت (احتياطي) =====================
-warnings_db = {}          # مستخدم فقط إذا تعذر الاتصال بـ Supabase
-user_messages = {}        # يبقى في الذاكرة لأنه مؤقت
+warnings_db = {}
+user_messages = {}
 pending_approvals = {}
 
 
 # ===================== دوال Supabase الأساسية =====================
 
 def get_warnings(user_id: int) -> int:
-    """جلب عدد مخالفات المستخدم من قاعدة البيانات"""
     if not supabase:
         return warnings_db.get(user_id, 0)
     try:
@@ -95,7 +96,6 @@ def get_warnings(user_id: int) -> int:
 
 
 def increment_warning(user_id: int, first_name: str) -> int:
-    """زيادة عدد مخالفات المستخدم بمقدار 1 وإرجاع العدد الجديد"""
     if not supabase:
         warnings_db[user_id] = warnings_db.get(user_id, 0) + 1
         return warnings_db[user_id]
@@ -120,7 +120,6 @@ def increment_warning(user_id: int, first_name: str) -> int:
 
 
 def reset_warnings_db(user_id: int):
-    """إعادة تعيين مخالفات المستخدم إلى 0"""
     if not supabase:
         if user_id in warnings_db:
             del warnings_db[user_id]
@@ -134,7 +133,6 @@ def reset_warnings_db(user_id: int):
 
 
 def log_violation(user_id: int, chat_id: int, violation_type: str, content: str):
-    """تسجيل المخالفة في جدول السجل"""
     if not supabase:
         return
     try:
@@ -149,7 +147,6 @@ def log_violation(user_id: int, chat_id: int, violation_type: str, content: str)
 
 
 def get_group_settings(chat_id: int) -> dict:
-    """جلب إعدادات المجموعة من قاعدة البيانات"""
     default = {"lock_links": True, "lock_media": False, "lock_forward": False}
     if not supabase:
         return default
@@ -176,7 +173,6 @@ def get_group_settings(chat_id: int) -> dict:
 
 
 def update_group_setting(chat_id: int, setting_name: str, value: bool):
-    """تحديث إعداد معين لمجموعة معينة"""
     if not supabase:
         return
     try:
@@ -188,7 +184,6 @@ def update_group_setting(chat_id: int, setting_name: str, value: bool):
 # ===================== دوال الإحصائيات =====================
 
 def get_total_violations(chat_id: int) -> int:
-    """جلب إجمالي المخالفات في مجموعة معينة"""
     if not supabase:
         return 0
     try:
@@ -200,7 +195,6 @@ def get_total_violations(chat_id: int) -> int:
 
 
 def get_violations_by_type(chat_id: int, violation_type: str) -> int:
-    """جلب عدد المخالفات حسب النوع في مجموعة معينة"""
     if not supabase:
         return 0
     try:
@@ -212,7 +206,6 @@ def get_violations_by_type(chat_id: int, violation_type: str) -> int:
 
 
 def get_total_warnings() -> int:
-    """جلب إجمالي التحذيرات الصادرة (مجموع count في جدول warnings)"""
     if not supabase:
         return 0
     try:
@@ -225,7 +218,6 @@ def get_total_warnings() -> int:
 
 
 def get_users_with_warnings() -> int:
-    """جلب عدد المستخدمين الذين لديهم مخالفات"""
     if not supabase:
         return 0
     try:
@@ -247,7 +239,6 @@ async def is_admin(bot, chat_id, user_id):
 
 
 def clean_obfuscated_text(text: str) -> str:
-    """تنظيف النص من محاولات إخفاء الروابط"""
     cleaned = re.sub(r'\s+', '', text)
     cleaned = re.sub(r'dot', '.', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'at', '@', cleaned, flags=re.IGNORECASE)
@@ -277,6 +268,7 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "🚪 مغادرة": "🚪",
         "❌ طرد": "⛔",
         "🔇 كتم 10 دقائق": "🔇",
+        "🛑 حساب جديد (ممنوع)": "🛑",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -639,7 +631,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>منع التوجيه</b>: معطل ❌\n"
         "🔹 <b>الترحيب</b>: مفعل ✅\n"
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
-        "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n\n"
+        "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n"
+        "🔹 <b>حماية الحسابات الجديدة</b>: عمر < يوم = حظر فوري 🛑\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو\n"
         "/unban [ID]\n"
@@ -657,7 +650,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض قوانين المجموعة"""
     await update.message.reply_text(
         GROUP_RULES,
         parse_mode="HTML"
@@ -684,7 +676,6 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== أمر الإحصائيات =====================
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض إحصائيات البوت (للمشرفين فقط)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
@@ -713,7 +704,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode="HTML")
 
 
-# ===================== المعالج الرئيسي (مع كتم 10 دقائق للمخالفة الثانية) =====================
+# ===================== المعالج الرئيسي (مع حماية الحسابات الجديدة) =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -724,6 +715,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_title = update.effective_chat.title or "المجموعة"
     user = update.effective_user
 
+    # 1. منع الأعضاء غير الموافقين على القوانين
     if user_id in pending_approvals:
         try:
             await update.message.delete()
@@ -735,17 +727,21 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    if await check_flood(update, context):
-        return
-
+    # 2. تجاهل المشرفين
     if await is_admin(context.bot, chat_id, user_id):
         return
 
+    # 3. ✅ فحص التكرار (Anti-Flood)
+    if await check_flood(update, context):
+        return
+
+    # ✅ جلب إعدادات المجموعة من قاعدة البيانات
     settings = get_group_settings(chat_id)
     lock_links = settings.get("lock_links", True)
     lock_media = settings.get("lock_media", False)
     lock_forward = settings.get("lock_forward", False)
 
+    # 4. فحص الميديا
     if lock_media and (update.message.photo or update.message.video):
         try:
             await update.message.delete()
@@ -764,6 +760,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 5. فحص الرسائل المعاد توجيهها
     if lock_forward and update.message.forward_date:
         try:
             await update.message.delete()
@@ -782,6 +779,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 6. فحص النص
     if not update.message.text:
         return
 
@@ -807,6 +805,34 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type = "رابط غير مسموح" if original_text == link_cleaned else "رابط غير مسموح (ملتف)"
 
     if is_violation:
+        # ✅ 7. التحقق من عمر الحساب (حماية الحسابات الجديدة)
+        try:
+            account_age_days = (datetime.now() - user.date).days
+        except:
+            # إذا لم تكن خاصية date متاحة (لن يحدث عادةً)، نمرر التحقق
+            account_age_days = MIN_ACCOUNT_AGE_DAYS + 1
+
+        if account_age_days < MIN_ACCOUNT_AGE_DAYS:
+            # 🔥 حساب جديد: حظر فوري بدون تحذير
+            try:
+                await update.message.delete()
+                await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🛑 {user.first_name} تم حظره تلقائياً لأن حسابه جديد (عمره أقل من {MIN_ACCOUNT_AGE_DAYS} يوم)."
+                )
+                await send_log(
+                    bot=context.bot,
+                    user=user,
+                    chat_title=chat_title,
+                    deleted_text=original_text,
+                    violation_type="🛑 حساب جديد (ممنوع)"
+                )
+                return
+            except Exception as e:
+                print(f"فشل حظر الحساب الجديد {user_id}: {e}")
+                # نستمر في المعالجة العادية إذا فشل الحظر
+
         try:
             await update.message.delete()
         except Exception as e:
@@ -831,7 +857,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع النشر المخالف."
             )
         elif count == 2:
-            # ✅ كتم المستخدم لمدة 10 دقائق عند المخالفة الثانية
+            # كتم لمدة 10 دقائق عند المخالفة الثانية
             mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND_WARNING)
             if mute_success:
                 await context.bot.send_message(
@@ -846,7 +872,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     violation_type="🔇 كتم 10 دقائق"
                 )
             else:
-                # إذا فشل الكتم (قد لا يكون البوت مشرفاً)، نرسل تحذيراً فقط
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم، تأكد من صلاحيات البوت)"
@@ -893,7 +918,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع كتم 10 دقائق عند المخالفة الثانية...")
+    print("🤖 Raskov Security Bot يعمل الآن مع حماية الحسابات الجديدة...")
     app.run_polling()
 
 
