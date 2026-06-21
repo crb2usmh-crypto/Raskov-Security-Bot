@@ -41,22 +41,60 @@ GROUP_RULES = (
     "2️⃣ ممنوع نشر أرقام الهواتف أو المحافظ الرقمية.\n"
     "3️⃣ ممنوع التكرار السريع للرسائل (سبام).\n"
     "4️⃣ ممنوع نشر الصور أو الفيديوهات غير المفيدة.\n"
-    "5️⃣ احترام جميع الأعضاء.\n\n"
+    "5️⃣ ممنوع استخدام الكلمات الممنوعة (نصب، احتيال، سبام).\n"
+    "6️⃣ احترام جميع الأعضاء.\n\n"
     "⚠️ المخالفة = تحذير، والمخالفة الثالثة = حظر تلقائي.\n"
     "🔇 المخالفة الثانية = كتم 10 دقائق.\n"
     "🛑 الحسابات الجديدة (أقل من يوم) = حظر فوري عند المخالفة.\n"
     "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
 )
 
+# ===================== 🚫 الكلمات الممنوعة =====================
+# أضف هنا الكلمات التي تريد منعها (اكتبها بالعربية أو الإنجليزية)
+FORBIDDEN_WORDS = [
+    # كلمات عربية
+    "نصب",
+    "احتيال",
+    "سبام",
+    "إعلان",
+    "دعاية",
+    "مؤامرة",
+    "تزوير",
+    "اختراق",
+    "حساب مميز",
+    "أرباح سريعة",
+    "استثمار مضمون",
+    "ثروة",
+    
+    # كلمات إنجليزية
+    "scam",
+    "spam",
+    "hack",
+    "cheat",
+    "fraud",
+    "phishing",
+    "promo",
+    "advertisement",
+    "click here",
+    "earn money",
+    "free money",
+    "investment",
+    "guaranteed profit",
+    
+    # كلمات خاصة بمجتمع Pi (يمكنك تعديلها)
+    "بيع باي",
+    "شراء باي",
+    "سعر باي",
+    "تداول باي",
+]
+
 # ===================== إعدادات الحماية =====================
 AUTO_KICK_TIMEOUT = 60
 FLOOD_LIMIT = 5
 FLOOD_TIME = 4
 MUTE_DURATION = 5
-MUTE_DURATION_SECOND_WARNING = 10  # مدة الكتم عند المخالفة الثانية (بالدقائق)
-
-# ✅ إعدادات حماية الحسابات الجديدة
-MIN_ACCOUNT_AGE_DAYS = 1  # الحد الأدنى لعمر الحساب (بالأيام)
+MUTE_DURATION_SECOND_WARNING = 10
+MIN_ACCOUNT_AGE_DAYS = 1
 
 # ===================== القائمة البيضاء =====================
 ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
@@ -250,6 +288,18 @@ def clean_obfuscated_text(text: str) -> str:
     return cleaned
 
 
+def contains_forbidden_word(text: str) -> tuple:
+    """
+    التحقق من وجود كلمة ممنوعة في النص
+    تعيد (True, الكلمة_التي_تم_العثور_عليها) أو (False, None)
+    """
+    text_lower = text.lower()
+    for word in FORBIDDEN_WORDS:
+        if word.lower() in text_lower:
+            return True, word
+    return False, None
+
+
 async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط"):
     if not LOG_CHANNEL_ID:
         return
@@ -269,6 +319,7 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "❌ طرد": "⛔",
         "🔇 كتم 10 دقائق": "🔇",
         "🛑 حساب جديد (ممنوع)": "🛑",
+        "🚫 كلمة ممنوعة": "🚫",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -632,7 +683,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>الترحيب</b>: مفعل ✅\n"
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
         "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n"
-        "🔹 <b>حماية الحسابات الجديدة</b>: عمر < يوم = حظر فوري 🛑\n\n"
+        "🔹 <b>حماية الحسابات الجديدة</b>: عمر < يوم = حظر فوري 🛑\n"
+        "🔹 <b>الكلمات الممنوعة</b>: مفعلة 🚫\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو\n"
         "/unban [ID]\n"
@@ -704,7 +756,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode="HTML")
 
 
-# ===================== المعالج الرئيسي (مع حماية الحسابات الجديدة) =====================
+# ===================== المعالج الرئيسي (مع الكلمات الممنوعة) =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -727,15 +779,15 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    # 2. تجاهل المشرفين
-    if await is_admin(context.bot, chat_id, user_id):
-        return
-
-    # 3. ✅ فحص التكرار (Anti-Flood)
+    # 2. فحص التكرار
     if await check_flood(update, context):
         return
 
-    # ✅ جلب إعدادات المجموعة من قاعدة البيانات
+    # 3. تجاهل المشرفين
+    if await is_admin(context.bot, chat_id, user_id):
+        return
+
+    # جلب إعدادات المجموعة من قاعدة البيانات
     settings = get_group_settings(chat_id)
     lock_links = settings.get("lock_links", True)
     lock_media = settings.get("lock_media", False)
@@ -784,7 +836,73 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     original_text = update.message.text
-    
+
+    # ✅ 7. فحص الكلمات الممنوعة (الأولوية القصوى)
+    has_forbidden, found_word = contains_forbidden_word(original_text)
+    if has_forbidden:
+        try:
+            await update.message.delete()
+        except Exception as e:
+            print(f"Delete error: {e}")
+            return
+
+        await send_log(
+            bot=context.bot,
+            user=user,
+            chat_title=chat_title,
+            deleted_text=original_text,
+            violation_type=f"🚫 كلمة ممنوعة: '{found_word}'"
+        )
+
+        # تسجيل المخالفة في قاعدة البيانات
+        log_violation(user_id, chat_id, "كلمة ممنوعة", original_text)
+
+        # زيادة المخالفات
+        count = increment_warning(user_id, user.first_name)
+
+        if count == 1:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع استخدام الكلمات الممنوعة ('{found_word}')."
+            )
+        elif count == 2:
+            mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND_WARNING)
+            if mute_success:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ {user.first_name} تحذير 2/3 - تم كتمك {MUTE_DURATION_SECOND_WARNING} دقائق لاستخدام كلمات ممنوعة."
+                )
+                await send_log(
+                    bot=context.bot,
+                    user=user,
+                    chat_title=chat_title,
+                    deleted_text=f"كتم {MUTE_DURATION_SECOND_WARNING} دقائق (كلمة ممنوعة)",
+                    violation_type="🔇 كتم 10 دقائق"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم)"
+                )
+        elif count >= 3:
+            try:
+                await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🚫 تم حظر {user.first_name} تلقائياً (3/3)."
+                )
+                reset_warnings_db(user_id)
+            except Exception as e:
+                await send_log(
+                    bot=context.bot,
+                    user=user,
+                    chat_title=chat_title,
+                    deleted_text=f"فشل الحظر: {e}",
+                    violation_type="⚠️ خطأ صلاحيات"
+                )
+        return
+
+    # 8. فحص الروابط والأرقام والمحافظ (كما هي)
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
     wallet_cleaned = re.sub(r'\s', '', original_text)
     link_cleaned = clean_obfuscated_text(original_text)
@@ -805,15 +923,13 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type = "رابط غير مسموح" if original_text == link_cleaned else "رابط غير مسموح (ملتف)"
 
     if is_violation:
-        # ✅ 7. التحقق من عمر الحساب (حماية الحسابات الجديدة)
+        # التحقق من عمر الحساب (حماية الحسابات الجديدة)
         try:
             account_age_days = (datetime.now() - user.date).days
         except:
-            # إذا لم تكن خاصية date متاحة (لن يحدث عادةً)، نمرر التحقق
             account_age_days = MIN_ACCOUNT_AGE_DAYS + 1
 
         if account_age_days < MIN_ACCOUNT_AGE_DAYS:
-            # 🔥 حساب جديد: حظر فوري بدون تحذير
             try:
                 await update.message.delete()
                 await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
@@ -831,7 +947,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             except Exception as e:
                 print(f"فشل حظر الحساب الجديد {user_id}: {e}")
-                # نستمر في المعالجة العادية إذا فشل الحظر
 
         try:
             await update.message.delete()
@@ -857,7 +972,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع النشر المخالف."
             )
         elif count == 2:
-            # كتم لمدة 10 دقائق عند المخالفة الثانية
             mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND_WARNING)
             if mute_success:
                 await context.bot.send_message(
@@ -874,7 +988,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم، تأكد من صلاحيات البوت)"
+                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم)"
                 )
         elif count >= 3:
             try:
@@ -918,7 +1032,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع حماية الحسابات الجديدة...")
+    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة...")
     app.run_polling()
 
 
