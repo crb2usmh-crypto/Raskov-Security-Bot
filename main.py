@@ -43,6 +43,7 @@ GROUP_RULES = (
     "4️⃣ ممنوع نشر الصور أو الفيديوهات غير المفيدة.\n"
     "5️⃣ احترام جميع الأعضاء.\n\n"
     "⚠️ المخالفة = تحذير، والمخالفة الثالثة = حظر تلقائي.\n"
+    "🔇 المخالفة الثانية = كتم 10 دقائق.\n"
     "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
 )
 
@@ -51,6 +52,7 @@ AUTO_KICK_TIMEOUT = 60
 FLOOD_LIMIT = 5
 FLOOD_TIME = 4
 MUTE_DURATION = 5
+MUTE_DURATION_SECOND_WARNING = 10  # ✅ مدة الكتم عند المخالفة الثانية (بالدقائق)
 
 # ===================== القائمة البيضاء =====================
 ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
@@ -274,6 +276,7 @@ async def send_log(bot, user, chat_title, deleted_text, violation_type="رابط
         "👋 ترحيب": "👋",
         "🚪 مغادرة": "🚪",
         "❌ طرد": "⛔",
+        "🔇 كتم 10 دقائق": "🔇",
     }
     emoji = emoji_map.get(violation_type, "⚠️")
     log_message = (
@@ -635,7 +638,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>منع الميديا</b>: معطل ❌\n"
         "🔹 <b>منع التوجيه</b>: معطل ❌\n"
         "🔹 <b>الترحيب</b>: مفعل ✅\n"
-        "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n\n"
+        "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
+        "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو\n"
         "/unban [ID]\n"
@@ -709,7 +713,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode="HTML")
 
 
-# ===================== المعالج الرئيسي =====================
+# ===================== المعالج الرئيسي (مع كتم 10 دقائق للمخالفة الثانية) =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -827,10 +831,26 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"⚠️ {user.first_name} تحذير 1/3 - ممنوع النشر المخالف."
             )
         elif count == 2:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير."
-            )
+            # ✅ كتم المستخدم لمدة 10 دقائق عند المخالفة الثانية
+            mute_success = await mute_user(context.bot, chat_id, user_id, MUTE_DURATION_SECOND_WARNING)
+            if mute_success:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ {user.first_name} تحذير 2/3 - تم كتمك لمدة {MUTE_DURATION_SECOND_WARNING} دقائق. المخالفة الثالثة = حظر."
+                )
+                await send_log(
+                    bot=context.bot,
+                    user=user,
+                    chat_title=chat_title,
+                    deleted_text=f"كتم {MUTE_DURATION_SECOND_WARNING} دقائق (المخالفة الثانية)",
+                    violation_type="🔇 كتم 10 دقائق"
+                )
+            else:
+                # إذا فشل الكتم (قد لا يكون البوت مشرفاً)، نرسل تحذيراً فقط
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ {user.first_name} تحذير 2/3 - التحذير الأخير. (فشل الكتم، تأكد من صلاحيات البوت)"
+                )
         elif count >= 3:
             try:
                 await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
@@ -864,7 +884,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
-    app.add_handler(CommandHandler("rules", rules))  # ✅ أمر القوانين الجديد
+    app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("testlog", test_log))
 
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
@@ -873,7 +893,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع Supabase وأوامر /stats و /rules...")
+    print("🤖 Raskov Security Bot يعمل الآن مع كتم 10 دقائق عند المخالفة الثانية...")
     app.run_polling()
 
 
