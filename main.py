@@ -76,7 +76,7 @@ user_messages = {}        # يبقى في الذاكرة لأنه مؤقت
 pending_approvals = {}
 
 
-# ===================== دوال Supabase =====================
+# ===================== دوال Supabase الأساسية =====================
 
 def get_warnings(user_id: int) -> int:
     """جلب عدد مخالفات المستخدم من قاعدة البيانات"""
@@ -161,7 +161,6 @@ def get_group_settings(chat_id: int) -> dict:
                 "lock_forward": data.get("lock_forward", False),
             }
         else:
-            # إنشاء سجل افتراضي للمجموعة الجديدة
             supabase.table("group_settings").insert({
                 "chat_id": chat_id,
                 "lock_links": True,
@@ -184,7 +183,58 @@ def update_group_setting(chat_id: int, setting_name: str, value: bool):
         print(f"⚠️ خطأ في تحديث الإعدادات: {e}")
 
 
-# ===================== دوال المساعدة =====================
+# ===================== دوال الإحصائيات (جديدة) =====================
+
+def get_total_violations(chat_id: int) -> int:
+    """جلب إجمالي المخالفات في مجموعة معينة"""
+    if not supabase:
+        return 0
+    try:
+        res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).execute()
+        return res.count if res.count else 0
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب إجمالي المخالفات: {e}")
+        return 0
+
+
+def get_violations_by_type(chat_id: int, violation_type: str) -> int:
+    """جلب عدد المخالفات حسب النوع في مجموعة معينة"""
+    if not supabase:
+        return 0
+    try:
+        res = supabase.table("violations_log").select("id", count="exact").eq("chat_id", chat_id).eq("type", violation_type).execute()
+        return res.count if res.count else 0
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب المخالفات حسب النوع: {e}")
+        return 0
+
+
+def get_total_warnings() -> int:
+    """جلب إجمالي التحذيرات الصادرة (مجموع count في جدول warnings)"""
+    if not supabase:
+        return 0
+    try:
+        data = supabase.table("warnings").select("count").execute()
+        total = sum(item.get("count", 0) for item in data.data) if data.data else 0
+        return total
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب إجمالي التحذيرات: {e}")
+        return 0
+
+
+def get_users_with_warnings() -> int:
+    """جلب عدد المستخدمين الذين لديهم مخالفات"""
+    if not supabase:
+        return 0
+    try:
+        res = supabase.table("warnings").select("user_id", count="exact").execute()
+        return res.count if res.count else 0
+    except Exception as e:
+        print(f"⚠️ خطأ في جلب عدد المستخدمين: {e}")
+        return 0
+
+
+# ===================== دوال المساعدة الأساسية =====================
 
 async def is_admin(bot, chat_id, user_id):
     try:
@@ -523,7 +573,6 @@ async def reset_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = update.message.reply_to_message.from_user
     target_id = target.id
     
-    # ✅ استخدام دالة Supabase لإعادة التعيين
     reset_warnings_db(target_id)
 
     await update.message.reply_text(f"✅ تم إعادة تعيين مخالفات {target.first_name}.")
@@ -593,7 +642,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/resetwarnings - رد على رسالة العضو\n"
         "/locklinks - تبديل\n"
         "/lockmedia - تبديل\n"
-        "/lockforward - تبديل\n\n"
+        "/lockforward - تبديل\n"
+        "/stats - عرض الإحصائيات\n\n"
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/testlog - اختبار اللوجات",
@@ -603,7 +653,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    count = get_warnings(user_id)  # ✅ من قاعدة البيانات
+    count = get_warnings(user_id)
     await update.message.reply_text(f"⚠️ عدد مخالفاتك: {count}/3")
 
 
@@ -618,7 +668,42 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ فشل الإرسال: {e}")
 
 
-# ===================== المعالج الرئيسي (مع قاعدة البيانات) =====================
+# ===================== أمر الإحصائيات (جديد) =====================
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إحصائيات البوت (للمشرفين فقط)"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    # التحقق من صلاحيات المشرف
+    if not await is_admin(context.bot, chat_id, user_id):
+        await update.message.reply_text("❌ هذا الأمر للمشرفين فقط.")
+        return
+
+    # جلب الإحصائيات من قاعدة البيانات
+    total_violations = get_total_violations(chat_id)
+    links_deleted = get_violations_by_type(chat_id, "رابط غير مسموح") + get_violations_by_type(chat_id, "رابط غير مسموح (ملتف)")
+    phones_deleted = get_violations_by_type(chat_id, "رقم هاتف")
+    wallets_deleted = get_violations_by_type(chat_id, "محفظة رقمية")
+    total_warnings = get_total_warnings()
+    users_with_warnings = get_users_with_warnings()
+
+    # إنشاء رسالة الإحصائيات
+    stats_message = (
+        "📊 <b>إحصائيات البوت</b>\n\n"
+        f"🛡️ <b>إجمالي المخالفات</b>: {total_violations}\n"
+        f"🚫 <b>الروابط المحذوفة</b>: {links_deleted}\n"
+        f"📞 <b>أرقام الهواتف المحذوفة</b>: {phones_deleted}\n"
+        f"💰 <b>المحافظ الرقمية المحذوفة</b>: {wallets_deleted}\n"
+        f"⚠️ <b>إجمالي التحذيرات الصادرة</b>: {total_warnings}\n"
+        f"👤 <b>الأعضاء الذين لديهم مخالفات</b>: {users_with_warnings}\n\n"
+        "📌 يتم تحديث الإحصائيات تلقائياً مع كل مخالفة."
+    )
+
+    await update.message.reply_text(stats_message, parse_mode="HTML")
+
+
+# ===================== المعالج الرئيسي =====================
 
 async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -649,7 +734,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_admin(context.bot, chat_id, user_id):
         return
 
-    # ✅ جلب إعدادات المجموعة من قاعدة البيانات
+    # جلب إعدادات المجموعة من قاعدة البيانات
     settings = get_group_settings(chat_id)
     lock_links = settings.get("lock_links", True)
     lock_media = settings.get("lock_media", False)
@@ -699,27 +784,25 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     original_text = update.message.text
     
-    # ✅ تنظيف النص للكشف عن الأرقام (إزالة مسافات، شرطات، أقواس)
+    # تنظيف النص للكشف عن الأرقام (إزالة مسافات، شرطات، أقواس)
     phone_cleaned = re.sub(r'[\s\-\(\)]', '', original_text)
-    # ✅ تنظيف النص للكشف عن المحافظ (إزالة مسافات فقط)
+    # تنظيف النص للكشف عن المحافظ (إزالة مسافات فقط)
     wallet_cleaned = re.sub(r'\s', '', original_text)
-    # ✅ تنظيف النص للكشف عن الروابط (إزالة محاولات التمويه)
+    # تنظيف النص للكشف عن الروابط (إزالة محاولات التمويه)
     link_cleaned = clean_obfuscated_text(original_text)
 
     is_violation = False
     violation_type = "رابط غير مسموح"
 
-    # فحص المحفظة الرقمية (باستخدام النص المنظف للمحافظ)
+    # فحص المحفظة الرقمية
     if WALLET_PATTERN.search(wallet_cleaned):
         is_violation = True
         violation_type = "محفظة رقمية"
-    
-    # فحص رقم الهاتف (باستخدام النص المنظف للأرقام)
+    # فحص رقم الهاتف
     elif not is_violation and PHONE_PATTERN.search(phone_cleaned):
         is_violation = True
         violation_type = "رقم هاتف"
-    
-    # فحص الرابط (باستخدام النص المنظف للروابط)
+    # فحص الرابط
     elif not is_violation and lock_links and LINK_PATTERN.search(link_cleaned):
         is_allowed = any(domain in link_cleaned.lower() for domain in ALLOWED_DOMAINS)
         if not is_allowed:
@@ -742,10 +825,10 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             violation_type=violation_type
         )
 
-        # ✅ تسجيل المخالفة في قاعدة البيانات
+        # تسجيل المخالفة في قاعدة البيانات
         log_violation(user_id, chat_id, violation_type, original_text)
 
-        # ✅ زيادة المخالفات في قاعدة البيانات
+        # زيادة المخالفات في قاعدة البيانات
         count = increment_warning(user_id, user.first_name)
 
         if count == 1:
@@ -765,7 +848,6 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=chat_id,
                     text=f"🚫 تم حظر {user.first_name} تلقائياً (3/3)."
                 )
-                # ✅ إعادة تعيين المخالفات بعد الحظر
                 reset_warnings_db(user_id)
             except Exception as e:
                 await send_log(
@@ -788,6 +870,9 @@ def main():
     app.add_handler(CommandHandler("locklinks", toggle_lock_links))
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
+    
+    # أمر الإحصائيات (جديد)
+    app.add_handler(CommandHandler("stats", stats))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
@@ -799,7 +884,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع Supabase...")
+    print("🤖 Raskov Security Bot يعمل الآن مع Supabase وأمر /stats...")
     app.run_polling()
 
 
