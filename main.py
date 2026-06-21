@@ -11,7 +11,7 @@ from supabase import create_client, Client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, WebAppInfo, ReplyKeyboardMarkup
+from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -1505,13 +1505,6 @@ async def force_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ زر ويب باستخدام ReplyKeyboardMarkup (مدعوم رسمياً)
-    web_app_button = KeyboardButton(
-        text="📊 فتح لوحة Pi",
-        web_app=WebAppInfo(url="https://crb2usmh-crypto.github.io/Pi-Dashboard/")
-    )
-    reply_markup = ReplyKeyboardMarkup([[web_app_button]], resize_keyboard=True)
-
     await update.message.reply_text(
         "🛡️ <b>Raskov Security Bot v6.0</b>\n\n"
         "🔹 <b>القائمة البيضاء</b>: minepi.com, pi.app\n"
@@ -1523,8 +1516,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>قاعدة البيانات</b>: مفعلة ✅\n"
         "🔹 <b>إعدادات قابلة للتخصيص</b>: ✅\n"
         "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n"
-        "🔹 <b>مستويات المشرفين</b>: مفعلة 👑\n"
-        "🔹 <b>لوحة Pi Dashboard</b>: مفعلة 📊\n\n"
+        "🔹 <b>مستويات المشرفين</b>: مفعلة 👑\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو (مستوى 2+)\n"
         "/unban [ID] (مستوى 2+)\n"
@@ -1543,10 +1535,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👤 <b>أوامر الأعضاء</b>:\n"
         "/warnings - عرض مخالفاتك\n"
         "/rules - عرض قوانين المجموعة\n"
-        "/testlog - اختبار اللوجات\n\n"
-        "📊 <b>لوحة Pi Dashboard</b>:\n"
-        "اضغط على الزر أدناه لفتح لوحة التحكم.",
-        reply_markup=reply_markup,
+        "/testlog - اختبار اللوجات",
         parse_mode="HTML"
     )
 
@@ -1930,7 +1919,7 @@ def main():
     print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
 
     print("🤖 Raskov Security Bot يعمل الآن مع جميع الميزات...")
-    app.run_polling(drop_pending_updates=True)  # ✅ حل مشكلة Conflict
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
