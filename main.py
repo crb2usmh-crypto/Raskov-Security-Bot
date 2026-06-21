@@ -17,6 +17,105 @@ from telegram.ext import (
     filters,
 )
 
+# ===================== متغيرات الرسائل المخصصة (لتسهيل التعديل) =====================
+
+# ✅ رسالة الترحيب بعد حل الكابتشا والموافقة على القوانين
+WELCOME_MESSAGE = (
+    "🎉 أهلاً وسهلاً بك {first_name} في مجموعة {group_name}!\n\n"
+    "📌 <b>مجتمع Pi Network</b> يرحب بك. هنا نتبادل المعرفة وندعم بعضنا البعض.\n"
+    "💡 تذكر أن التعاون والاحترام هما أساس مجتمعنا.\n\n"
+    "🔍 استخدم /rules لمراجعة القوانين في أي وقت.\n"
+    "📊 استخدم /stats (للمشرفين) لمتابعة إحصائيات المجموعة.\n\n"
+    "🌟 نتمنى لك وقتاً ممتعاً ومفيداً!"
+)
+
+# ✅ رسالة القوانين (مخصصة لمجتمع Pi)
+GROUP_RULES = (
+    "📜 <b>قوانين مجموعة Pi Network</b> 📜\n\n"
+    "1️⃣ <b>الروابط المسموحة فقط</b>: minepi.com و pi.app.\n"
+    "2️⃣ <b>ممنوع نشر أرقام الهواتف</b> أو المحافظ الرقمية.\n"
+    "3️⃣ <b>ممنوع التكرار السريع</b> للرسائل (سبام).\n"
+    "4️⃣ <b>ممنوع نشر الصور أو الفيديوهات</b> غير المفيدة.\n"
+    "5️⃣ <b>ممنوع استخدام الكلمات الممنوعة</b> (نصب، احتيال، سبام).\n"
+    "6️⃣ <b>احترام جميع الأعضاء</b> والابتعاد عن الشتائم.\n\n"
+    "⚠️ <b>نظام العقوبات</b>:\n"
+    "• المخالفة الأولى: تحذير 📢\n"
+    "• المخالفة الثانية: كتم مؤقت 🔇\n"
+    "• المخالفة الثالثة: حظر تلقائي 🚫\n\n"
+    "🛑 الحسابات الجديدة (أقل من يوم) = حظر فوري عند المخالفة.\n\n"
+    "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
+)
+
+# ✅ رسالة الكابتشا
+CAPTCHA_MESSAGE = (
+    "🔐 <b>تحقق بشري مطلوب</b> {first_name}!\n\n"
+    "لحماية المجموعة من البوتات الآلية، يرجى حل المسألة التالية:\n\n"
+    "<b>{question}</b>\n\n"
+    "⏳ لديك <b>{timeout}</b> ثانية للإجابة.\n"
+    "📝 اكتب الرقم فقط (مثال: 5)."
+)
+
+# ✅ رسالة فشل الكابتشا (عند الإجابة الخاطئة)
+CAPTCHA_FAIL_MESSAGE = (
+    "❌ إجابة خاطئة {first_name}. حاول مرة أخرى ({attempts}/{max_attempts}):\n\n"
+    "{question}"
+)
+
+# ✅ رسالة نجاح الكابتشا (تُرسل في الخاص)
+CAPTCHA_SUCCESS_MESSAGE = (
+    "✅ تم التحقق بنجاح {first_name}!\n"
+    "سيتم الآن عرض قوانين المجموعة. يرجى الموافقة عليها لإتمام الانضمام."
+)
+
+# ✅ رسالة التحذير الأول
+WARNING_FIRST_MESSAGE = (
+    "⚠️ <b>تحذير {count}/{max_warnings}</b> {first_name}\n\n"
+    "📌 تم حذف رسالتك لأنها تحتوي على محتوى مخالف لقوانين المجموعة.\n"
+    "📖 راجع القوانين عبر /rules لتجنب العقوبات المستقبلية.\n\n"
+    "🔹 المخالفة الثانية = كتم مؤقت.\n"
+    "🔹 المخالفة الثالثة = حظر تلقائي."
+)
+
+# ✅ رسالة التحذير الثاني (مع الكتم)
+WARNING_SECOND_MESSAGE = (
+    "⚠️ <b>تحذير {count}/{max_warnings}</b> {first_name}\n\n"
+    "📌 تم حذف رسالتك المخالفة.\n"
+    "🔇 تم <b>كتمك لمدة {mute_duration} دقائق</b> كعقوبة للمخالفة الثانية.\n"
+    "📖 راجع القوانين عبر /rules لتجنب الحظر التلقائي.\n\n"
+    "🚫 المخالفة الثالثة = حظر نهائي."
+)
+
+# ✅ رسالة الحظر التلقائي
+BAN_MESSAGE = (
+    "🚫 <b>تم حظر {first_name} تلقائياً</b>\n\n"
+    "📌 وصل عدد مخالفاتك إلى {max_warnings}/{max_warnings}.\n"
+    "📖 القوانين واضحة، ونحن نحرص على توفير بيئة آمنة للجميع.\n\n"
+    "🔄 إذا كنت تعتقد أن هذا الحظر غير مبرر، يمكنك التواصل مع المشرفين.\n"
+    "📩 سيتم مراجعة طلبك بأسرع وقت."
+)
+
+# ✅ رسالة الكتم الناتج عن السبام (Anti-Flood)
+FLOOD_MUTE_MESSAGE = (
+    "🔇 {first_name} تم كتمك لمدة {duration} دقائق.\n"
+    "📌 السبب: إرسال أكثر من {limit} رسالة خلال {time} ثوانٍ (سبام).\n"
+    "📖 يرجى التوقف عن التكرار السريع للحفاظ على نقاش هادف."
+)
+
+# ✅ رسالة طرد الحساب الجديد
+NEW_ACCOUNT_BAN_MESSAGE = (
+    "🛑 {first_name} تم حظره تلقائياً.\n"
+    "📌 سبب الحظر: حساب جديد (عمره أقل من {days} يوم).\n"
+    "📖 نرحب بانضمامك بعد أن يصبح حسابك أقدم قليلاً."
+)
+
+# ✅ رسالة الوداع
+GOODBYE_MESSAGE = (
+    "🚪 وداعاً {first_name}.\n"
+    "📌 نتمنى لك التوفيق في رحلتك مع Pi Network.\n"
+    "🌟 أبوابنا مفتوحة لك دائماً إذا أردت العودة."
+)
+
+
 # ===================== إعدادات البيئة =====================
 TOKEN = os.getenv("BOT_TOKEN")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
@@ -35,22 +134,7 @@ else:
     supabase = None
     print("⚠️ Supabase غير مضبوط، سيتم استخدام الذاكرة المؤقتة")
 
-# ===================== القوانين =====================
-GROUP_RULES = (
-    "📜 <b>قوانين المجموعة</b> 📜\n\n"
-    "1️⃣ ممنوع نشر الروابط (ما عدا minepi.com و pi.app).\n"
-    "2️⃣ ممنوع نشر أرقام الهواتف أو المحافظ الرقمية.\n"
-    "3️⃣ ممنوع التكرار السريع للرسائل (سبام).\n"
-    "4️⃣ ممنوع نشر الصور أو الفيديوهات غير المفيدة.\n"
-    "5️⃣ ممنوع استخدام الكلمات الممنوعة (نصب، احتيال، سبام).\n"
-    "6️⃣ احترام جميع الأعضاء.\n\n"
-    "⚠️ نظام العقوبات قابل للتخصيص عبر أوامر المشرفين.\n"
-    "🔇 المخالفة الثانية = كتم (قابل للتعديل).\n"
-    "🛑 الحسابات الجديدة (أقل من يوم) = حظر فوري.\n"
-    "👆 اضغط على زر 'موافق' لتأكيد قبولك القوانين."
-)
-
-# ===================== 🚫 الكلمات الممنوعة =====================
+# ===================== الكلمات الممنوعة =====================
 FORBIDDEN_WORDS = [
     "نصب", "احتيال", "سبام", "إعلان", "دعاية", "مؤامرة", "تزوير",
     "اختراق", "حساب مميز", "أرباح سريعة", "استثمار مضمون", "ثروة",
@@ -59,14 +143,11 @@ FORBIDDEN_WORDS = [
     "investment", "guaranteed profit", "بيع باي", "شراء باي", "سعر باي", "تداول باي",
 ]
 
-# ===================== إعدادات الحماية الأساسية (كاحتياطي) =====================
-AUTO_KICK_TIMEOUT = 60          # سيتم استبدالها بإعدادات المجموعة
+# ===================== إعدادات الحماية الأساسية =====================
 FLOOD_LIMIT = 5
 FLOOD_TIME = 4
-MUTE_DURATION = 5               # مدة كتم السبام (ثابتة)
+MUTE_DURATION = 5
 MIN_ACCOUNT_AGE_DAYS = 1
-
-# ===================== القائمة البيضاء =====================
 ALLOWED_DOMAINS = ["minepi.com", "pi.app"]
 
 # ===================== الأنماط (Regex) =====================
@@ -154,7 +235,6 @@ def log_violation(user_id: int, chat_id: int, violation_type: str, content: str)
 
 
 def get_group_settings(chat_id: int) -> dict:
-    """جلب جميع إعدادات المجموعة (بما فيها الجديدة)"""
     default = {
         "lock_links": True,
         "lock_media": False,
@@ -178,7 +258,6 @@ def get_group_settings(chat_id: int) -> dict:
                 "captcha_timeout": data.get("captcha_timeout", 60),
             }
         else:
-            # إنشاء سجل افتراضي مع الإعدادات الجديدة
             supabase.table("group_settings").insert({
                 "chat_id": chat_id,
                 "lock_links": True,
@@ -194,7 +273,7 @@ def get_group_settings(chat_id: int) -> dict:
         return default
 
 
-def update_group_setting(chat_id: int, setting_name: str, value: bool):
+def update_group_setting(chat_id: int, setting_name: str, value):
     if not supabase:
         return
     try:
@@ -361,7 +440,12 @@ async def check_flood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
             )
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🔇 {update.effective_user.first_name} تم كتمه {MUTE_DURATION} دقائق للتكرار السريع."
+                text=FLOOD_MUTE_MESSAGE.format(
+                    first_name=update.effective_user.first_name,
+                    duration=MUTE_DURATION,
+                    limit=FLOOD_LIMIT,
+                    time=FLOOD_TIME
+                )
             )
         try:
             await update.message.delete()
@@ -388,7 +472,6 @@ def generate_captcha() -> tuple:
 
 
 async def send_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, first_name: str):
-    # ✅ جلب الإعدادات المخصصة للمجموعة
     settings = get_group_settings(chat_id)
     captcha_timeout = settings.get("captcha_timeout", 60)
 
@@ -403,10 +486,18 @@ async def send_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id
     keyboard = [[InlineKeyboardButton("🔄 تحديث الكابتشا", callback_data=f"refresh_captcha_{user_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    # ✅ استخدام الرسالة المخصصة
+    captcha_text = CAPTCHA_MESSAGE.format(
+        first_name=first_name,
+        question=question,
+        timeout=captcha_timeout
+    )
+
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text=f"🤖 تحقق بشري مطلوب! أجب على السؤال التالي (اكتب الرقم فقط):\n\n{question}\n\n⏳ لديك {captcha_timeout} ثانية.",
+            text=captcha_text,
+            parse_mode="HTML",
             reply_markup=reply_markup
         )
         await context.bot.send_message(
@@ -416,7 +507,8 @@ async def send_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id
     except:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🔐 {first_name}، أجب على الكابتشا التالية (اكتب الرقم فقط) في المجموعة:\n\n{question}\n\n⏳ لديك {captcha_timeout} ثانية.",
+            text=captcha_text,
+            parse_mode="HTML",
             reply_markup=reply_markup
         )
 
@@ -499,7 +591,8 @@ async def handle_captcha_answer(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text="✅ تم التحقق بنجاح! سيتم الآن عرض قوانين المجموعة."
+                text=CAPTCHA_SUCCESS_MESSAGE.format(first_name=first_name),
+                parse_mode="HTML"
             )
         except:
             pass
@@ -533,13 +626,11 @@ async def handle_captcha_answer(update: Update, context: ContextTypes.DEFAULT_TY
         if context.job_queue:
             job = context.job_queue.run_once(
                 callback=kick_non_agreed,
-                when=60,  # هذه المهلة لا تزال ثابتة، يمكنك جعلها قابلة للتخصيص لاحقاً
+                when=60,
                 data={"chat_id": original_chat_id, "user_id": user_id, "username": first_name},
                 name=f"approval_{user_id}"
             )
             pending_approvals[user_id] = job
-        else:
-            print("⚠️ job_queue غير مفعل، لن يتم طرد المستخدم تلقائياً.")
 
         await send_log(
             bot=context.bot,
@@ -578,15 +669,24 @@ async def handle_captcha_answer(update: Update, context: ContextTypes.DEFAULT_TY
             data["answer"] = new_answer
             pending_captcha[user_id] = data
 
+            fail_text = CAPTCHA_FAIL_MESSAGE.format(
+                first_name=first_name,
+                attempts=attempts,
+                max_attempts=3,
+                question=question
+            )
+
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text=f"❌ إجابة خاطئة. حاول مرة أخرى ({attempts}/3):\n\n{question}"
+                    text=fail_text,
+                    parse_mode="HTML"
                 )
             except:
                 await context.bot.send_message(
                     chat_id=original_chat_id,
-                    text=f"❌ {first_name} إجابة خاطئة. حاول مرة أخرى ({attempts}/3):\n\n{question}"
+                    text=fail_text,
+                    parse_mode="HTML"
                 )
 
 
@@ -645,7 +745,11 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await context.bot.ban_chat_member(chat.id, user.id)
                 await context.bot.send_message(
                     chat.id,
-                    text=f"🛑 {user.first_name} تم طرده لأن حسابه جديد (عمره أقل من {MIN_ACCOUNT_AGE_DAYS} يوم)."
+                    text=NEW_ACCOUNT_BAN_MESSAGE.format(
+                        first_name=user.first_name,
+                        days=MIN_ACCOUNT_AGE_DAYS
+                    ),
+                    parse_mode="HTML"
                 )
                 await send_log(
                     bot=context.bot,
@@ -718,9 +822,16 @@ async def handle_rules_approval(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         chat_id = update.effective_chat.id
+        chat_title = update.effective_chat.title or "المجموعة"
+
+        # ✅ استخدام رسالة الترحيب المخصصة
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🎉 أهلاً وسهلاً بك {user.first_name} في المجموعة!"
+            text=WELCOME_MESSAGE.format(
+                first_name=user.first_name,
+                group_name=chat_title
+            ),
+            parse_mode="HTML"
         )
 
         try:
@@ -747,9 +858,13 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id == context.bot.id:
         return
 
+    # ✅ استخدام رسالة الوداع المخصصة
     await context.bot.send_message(
         chat_id=chat.id,
-        text=f"🚪 وداعاً {user.first_name}، نتمنى لك التوفيق! 🤍"
+        text=GOODBYE_MESSAGE.format(
+            first_name=user.first_name
+        ),
+        parse_mode="HTML"
     )
 
     if user.id in pending_captcha:
@@ -771,7 +886,7 @@ async def goodbye_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===================== أوامر المشرفين (بما فيها الجديدة) =====================
+# ===================== أوامر المشرفين =====================
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -892,10 +1007,9 @@ async def toggle_lock_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"↩️ منع التوجيه: {'مفعل ✅' if new_value else 'معطل ❌'}")
 
 
-# ===================== الأوامر الجديدة لإدارة الإعدادات =====================
+# ===================== أوامر الإعدادات =====================
 
 async def set_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تحديد عدد التحذيرات قبل الحظر التلقائي"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
@@ -931,7 +1045,6 @@ async def set_warnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def set_mute_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تحديد مدة الكتم عند المخالفة الثانية (بالدقائق)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
@@ -967,7 +1080,6 @@ async def set_mute_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def set_captcha_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تحديد مهلة حل الكابتشا (بالثواني)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
@@ -1194,14 +1306,25 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count == 1:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ {user.first_name} تحذير 1/{max_warnings} - ممنوع استخدام الكلمات الممنوعة ('{found_word}')."
+                text=WARNING_FIRST_MESSAGE.format(
+                    first_name=user.first_name,
+                    count=count,
+                    max_warnings=max_warnings
+                ),
+                parse_mode="HTML"
             )
         elif count == 2:
             mute_success = await mute_user(context.bot, chat_id, user_id, mute_duration)
             if mute_success:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/{max_warnings} - تم كتمك {mute_duration} دقائق."
+                    text=WARNING_SECOND_MESSAGE.format(
+                        first_name=user.first_name,
+                        count=count,
+                        max_warnings=max_warnings,
+                        mute_duration=mute_duration
+                    ),
+                    parse_mode="HTML"
                 )
                 await send_log(
                     bot=context.bot,
@@ -1220,7 +1343,11 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"🚫 تم حظر {user.first_name} تلقائياً ({max_warnings}/{max_warnings})."
+                    text=BAN_MESSAGE.format(
+                        first_name=user.first_name,
+                        max_warnings=max_warnings
+                    ),
+                    parse_mode="HTML"
                 )
                 reset_warnings_db(user_id)
             except Exception as e:
@@ -1260,7 +1387,11 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"🛑 {user.first_name} تم حظره تلقائياً لأن حسابه جديد (عمره أقل من {MIN_ACCOUNT_AGE_DAYS} يوم)."
+                    text=NEW_ACCOUNT_BAN_MESSAGE.format(
+                        first_name=user.first_name,
+                        days=MIN_ACCOUNT_AGE_DAYS
+                    ),
+                    parse_mode="HTML"
                 )
                 await send_log(
                     bot=context.bot,
@@ -1292,14 +1423,25 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count == 1:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ {user.first_name} تحذير 1/{max_warnings} - ممنوع النشر المخالف."
+                text=WARNING_FIRST_MESSAGE.format(
+                    first_name=user.first_name,
+                    count=count,
+                    max_warnings=max_warnings
+                ),
+                parse_mode="HTML"
             )
         elif count == 2:
             mute_success = await mute_user(context.bot, chat_id, user_id, mute_duration)
             if mute_success:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ {user.first_name} تحذير 2/{max_warnings} - تم كتمك {mute_duration} دقائق. المخالفة التالية = حظر."
+                    text=WARNING_SECOND_MESSAGE.format(
+                        first_name=user.first_name,
+                        count=count,
+                        max_warnings=max_warnings,
+                        mute_duration=mute_duration
+                    ),
+                    parse_mode="HTML"
                 )
                 await send_log(
                     bot=context.bot,
@@ -1318,7 +1460,11 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"🚫 تم حظر {user.first_name} تلقائياً ({max_warnings}/{max_warnings})."
+                    text=BAN_MESSAGE.format(
+                        first_name=user.first_name,
+                        max_warnings=max_warnings
+                    ),
+                    parse_mode="HTML"
                 )
                 reset_warnings_db(user_id)
             except Exception as e:
@@ -1345,7 +1491,7 @@ def main():
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
 
-    # أوامر الإعدادات الجديدة
+    # أوامر الإعدادات
     app.add_handler(CommandHandler("setwarnings", set_warnings))
     app.add_handler(CommandHandler("setmutetime", set_mute_time))
     app.add_handler(CommandHandler("setcaptchatime", set_captcha_time))
@@ -1366,7 +1512,7 @@ def main():
     # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع الإعدادات القابلة للتخصيص...")
+    print("🤖 Raskov Security Bot يعمل الآن مع رسائل محسّنة ومخصصة...")
     app.run_polling()
 
 
