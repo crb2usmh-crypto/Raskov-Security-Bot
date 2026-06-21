@@ -3,6 +3,10 @@ import re
 from datetime import datetime, timedelta
 import telegram
 
+# ===================== استيراد جدولة المهام =====================
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
 from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -16,6 +20,7 @@ from telegram.ext import (
 # ===================== إعدادات البيئة =====================
 TOKEN = os.getenv("BOT_TOKEN")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
+REPORT_CHANNEL_ID = os.getenv("REPORT_CHANNEL_ID")  # ✅ قناة التقارير الأسبوعية
 
 # ===================== القوانين =====================
 GROUP_RULES = (
@@ -71,6 +76,9 @@ PHONE_PATTERN = re.compile(r"\+?\d{7,15}")
 warnings_db = {}
 user_messages = {}
 pending_approvals = {}
+
+# ===================== تخزين سجل المخالفات (للتقارير) =====================
+violations_log = []  # list of dicts: {"user_id": int, "type": str, "timestamp": datetime}
 
 
 # ===================== دوال المساعدة =====================
@@ -478,7 +486,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 <b>منع التوجيه</b>: معطل ❌\n"
         "🔹 <b>الترحيب</b>: مفعل ✅\n"
         "🔹 <b>الكلمات الممنوعة</b>: مفعلة 🚫\n"
-        "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n\n"
+        "🔹 <b>عقوبات المخالفات</b>: 1=تحذير, 2=كتم 10د, 3=حظر 🔇\n"
+        "🔹 <b>تقارير دورية</b>: أسبوعية 📊\n\n"
         "👑 <b>أوامر المشرفين</b>:\n"
         "/ban - رد على رسالة العضو\n"
         "/unban [ID]\n"
@@ -496,7 +505,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض قوانين المجموعة"""
     await update.message.reply_text(
         GROUP_RULES,
         parse_mode="HTML"
@@ -523,7 +531,6 @@ async def test_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== أمر الإحصائيات =====================
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض إحصائيات البوت (للمشرفين فقط)"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
@@ -545,12 +552,64 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 <b>عدد أعضاء المجموعة</b>: {chat_members_count}\n"
         f"⚠️ <b>إجمالي المخالفات</b>: {total_warnings}\n"
         f"👤 <b>الأعضاء المخالفين</b>: {total_users_with_warnings}\n"
-        f"🚫 <b>المحظورين</b>: {total_banned}\n"
-        f"🔇 <b>التحذيرات</b>: {total_warnings}\n\n"
+        f"🚫 <b>المحظورين</b>: {total_banned}\n\n"
         "📌 يتم تحديث الإحصائيات تلقائياً مع كل مخالفة."
     )
 
     await update.message.reply_text(stats_message, parse_mode="HTML")
+
+
+# ===================== التقارير الدورية (جديد) =====================
+
+async def send_weekly_report(bot):
+    """إرسال التقرير الأسبوعي إلى قناة المشرفين"""
+    if not REPORT_CHANNEL_ID:
+        print("⚠️ REPORT_CHANNEL_ID غير مضبوط، لن يتم إرسال التقرير.")
+        return
+
+    # حساب الإحصائيات
+    total_users_with_warnings = len(warnings_db)
+    total_warnings = sum(warnings_db.values())
+    
+    # أكثر عضو مخالفة
+    top_violator = None
+    top_violator_count = 0
+    for user_id, count in warnings_db.items():
+        if count > top_violator_count:
+            top_violator_count = count
+            # نحاول جلب اسم المستخدم (محلياً، لا يمكننا جلب الاسم من الذاكرة)
+            top_violator = f"ID: {user_id}"
+    
+    # تاريخ التقرير
+    report_date = datetime.now().strftime("%A, %d %B %Y")
+    week_start = (datetime.now() - timedelta(days=7)).strftime("%d/%m/%Y")
+    week_end = datetime.now().strftime("%d/%m/%Y")
+
+    report_message = (
+        "📊 <b>التقرير الأسبوعي للمجموعة</b>\n"
+        f"📅 <b>الأسبوع</b>: {week_start} - {week_end}\n"
+        f"📌 <b>تاريخ التقرير</b>: {report_date}\n\n"
+        f"🛡️ <b>إجمالي المخالفات</b>: {total_warnings}\n"
+        f"👤 <b>الأعضاء المخالفين</b>: {total_users_with_warnings}\n"
+    )
+    
+    if top_violator:
+        report_message += f"🏆 <b>أكثر عضو مخالفة</b>: {top_violator} ({top_violator_count} مخالفات)\n"
+    else:
+        report_message += "🏆 <b>لا توجد مخالفات</b> هذا الأسبوع! 🎉\n"
+
+    report_message += "\n📌 <i>يتم إنشاء هذا التقرير تلقائياً كل يوم أحد.</i>"
+
+    try:
+        await bot.send_message(chat_id=REPORT_CHANNEL_ID, text=report_message, parse_mode="HTML")
+        print("✅ تم إرسال التقرير الأسبوعي بنجاح.")
+    except Exception as e:
+        print(f"❌ فشل إرسال التقرير: {e}")
+
+
+async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """المهمة المجدولة لإرسال التقرير"""
+    await send_weekly_report(context.bot)
 
 
 # ===================== المعالج الرئيسي =====================
@@ -776,6 +835,7 @@ async def anti_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
+    # أوامر المشرفين
     app.add_handler(CommandHandler("ban", ban_user))
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("resetwarnings", reset_warnings))
@@ -783,21 +843,32 @@ def main():
     app.add_handler(CommandHandler("lockmedia", toggle_lock_media))
     app.add_handler(CommandHandler("lockforward", toggle_lock_forward))
     app.add_handler(CommandHandler("stats", stats))
-    
-    # ✅ أمر القوانين الجديد
-    app.add_handler(CommandHandler("rules", rules))
 
+    # الأوامر العامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("warnings", warnings))
+    app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("testlog", test_log))
 
+    # معالجات الأحداث
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_member))
     app.add_handler(CallbackQueryHandler(handle_rules_approval, pattern="^agree_rules_"))
 
+    # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
 
-    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة، كتم 10 دقائق، /stats، و /rules...")
+    # ===================== جدولة التقارير الأسبوعية (جديد) =====================
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        weekly_report_job,
+        CronTrigger(day_of_week='sun', hour=12, minute=0),  # كل يوم أحد الساعة 12:00
+        args=[app]
+    )
+    scheduler.start()
+    print("📊 تم جدولة التقارير الأسبوعية (كل يوم أحد الساعة 12:00)")
+
+    print("🤖 Raskov Security Bot يعمل الآن مع الكلمات الممنوعة، كتم 10 دقائق، /stats، /rules، والتقارير الدورية...")
     app.run_polling()
 
 
