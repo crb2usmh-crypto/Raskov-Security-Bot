@@ -1,5 +1,6 @@
 import os
 import re
+import json  # ✅ أضفنا هذا الاستيراد
 from datetime import datetime, timedelta
 import telegram
 
@@ -197,7 +198,7 @@ def update_group_setting(chat_id: int, setting_name: str, value: bool):
         print(f"⚠️ خطأ في تحديث الإعدادات: {e}")
 
 
-# ===================== دوال إحصائيات المجموعة (جديدة) =====================
+# ===================== دوال إحصائيات المجموعة =====================
 
 def update_group_stats(chat_id: int, members: int, violations: int, bans: int):
     """تحديث أو إدراج إحصائيات المجموعة في Supabase"""
@@ -976,7 +977,7 @@ async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
     await send_weekly_report(context.bot)
 
 
-# ===================== تحديث إحصائيات المجموعات (جديد) =====================
+# ===================== تحديث إحصائيات المجموعات =====================
 
 async def update_all_group_stats(context: ContextTypes.DEFAULT_TYPE):
     """تحديث إحصائيات جميع المجموعات التي يديرها البوت"""
@@ -1000,6 +1001,45 @@ async def update_all_group_stats(context: ContextTypes.DEFAULT_TYPE):
                     print(f"⚠️ فشل تحديث إحصائيات المجموعة {chat_id}: {e}")
     except Exception as e:
         print(f"⚠️ خطأ في جلب المجموعات: {e}")
+
+
+# ===================== ✅ معالج بيانات WebApp (جديد) =====================
+
+async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة البيانات المرسلة من التطبيق المصغر عبر tg.sendData"""
+    if not update.message or not update.message.web_app_data:
+        return
+    
+    data = update.message.web_app_data.data
+    try:
+        payload = json.loads(data)
+        if payload.get('type') == 'mining_reminder':
+            chat_id = payload.get('chat_id')
+            user_id = update.effective_user.id
+            first_name = update.effective_user.first_name or "المستخدم"
+            
+            # إرسال رسالة تذكير للمستخدم
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"⏰ <b>تذكير من Pi Dashboard</b>\n\n"
+                     f"🔔 حان وقت التعدين يا {first_name}! 🚀\n"
+                     f"📱 افتح تطبيق Pi الآن وابدأ التعدين.\n\n"
+                     f"📊 تابع أسعار Pi عبر لوحة التحكم: /start",
+                parse_mode="HTML"
+            )
+            
+            # تسجيل في اللوجات (اختياري)
+            if LOG_CHANNEL_ID:
+                await context.bot.send_message(
+                    chat_id=LOG_CHANNEL_ID,
+                    text=f"⏰ تم إرسال تذكير تعدين للمستخدم {first_name} (ID: {user_id})"
+                )
+            print(f"✅ تم إرسال تذكير التعدين للمستخدم {user_id}")
+            
+    except json.JSONDecodeError as e:
+        print(f"⚠️ خطأ في فك تشفير JSON: {e}")
+    except Exception as e:
+        print(f"⚠️ خطأ في معالجة بيانات WebApp: {e}")
 
 
 # ===================== المعالج الرئيسي =====================
@@ -1265,6 +1305,9 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_member))
     app.add_handler(CallbackQueryHandler(handle_rules_approval, pattern="^agree_rules_"))
+
+    # ✅ معالج بيانات WebApp (جديد)
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     # المعالج الرئيسي
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, anti_link))
