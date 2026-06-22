@@ -807,9 +807,12 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== الأوامر العامة =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id  # ✅ جلب معرف المجموعة تلقائياً
+
+    # ✅ زر فتح التطبيق مع تمرير chat_id في الرابط
     web_app_button = KeyboardButton(
         text="📊 فتح لوحة Pi",
-        web_app=WebAppInfo(url="https://crb2usmh-crypto.github.io/Pi-Dashboard/")
+        web_app=WebAppInfo(url=f"https://crb2usmh-crypto.github.io/Pi-Dashboard/?chat_id={chat_id}")
     )
     reply_markup = ReplyKeyboardMarkup([[web_app_button]], resize_keyboard=True)
 
@@ -842,7 +845,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/warnings - عرض مخالفاتك\n"
         "/testlog - اختبار اللوجات\n\n"
         "📊 <b>لوحة Pi Dashboard</b>:\n"
-        "اضغط على الزر أدناه لفتح لوحة التحكم.",
+        "اضغط على الزر أدناه لفتح لوحة التحكم الخاصة بهذه المجموعة.",
         reply_markup=reply_markup,
         parse_mode="HTML"
     )
